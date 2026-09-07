@@ -1,0 +1,10 @@
+// SurgesEntry — Distributed Event Processing Platform
+go 1.22.0
+
+use (
+	./proto
+	./simulator
+	./services/ingestion
+	./services/processing
+	./services/notification
+)
