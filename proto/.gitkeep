@@ -1,0 +1,2 @@
+# Proto definitions (Phase 2)
+# events.proto: event schema + Ingest/Process/Notify RPCs
