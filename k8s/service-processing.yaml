@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: processing-service
+  namespace: event-platform
+  labels:
+    app: processing-service
+spec:
+  type: ClusterIP
+  selector:
+    app: processing-service
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+    - name: health
+      port: 8080
+      targetPort: 8080

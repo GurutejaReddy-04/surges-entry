@@ -1,0 +1,2 @@
+# Ingestion Service (Phase 2)
+# Kafka consumer → validation → gRPC call to Processing Service

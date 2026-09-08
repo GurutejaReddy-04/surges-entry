@@ -1,0 +1,2 @@
+# Notification Service (Phase 4)
+# gRPC server → structured JSON alert to stdout

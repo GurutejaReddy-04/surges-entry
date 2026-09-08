@@ -1,0 +1,78 @@
+services:
+  notification:
+    image: event-platform/notification:latest
+    build:
+      context: .
+      dockerfile: services/notification/Dockerfile
+    container_name: notification
+    ports:
+      - "50052:50052"
+    environment:
+      GRPC_PORT: "50052"
+      HEALTH_PORT: "8080"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger:4317"
+      OTEL_SERVICE_NAME: "notification-service"
+    depends_on:
+      jaeger:
+        condition: service_healthy
+    networks:
+      - event-net
+
+  processing:
+    image: event-platform/processing:latest
+    build:
+      context: .
+      dockerfile: services/processing/Dockerfile
+    container_name: processing
+    ports:
+      - "50051:50051"
+    environment:
+      GRPC_PORT: "50051"
+      HEALTH_PORT: "8080"
+      REDIS_ADDR: "redis:6379"
+      POSTGRES_DSN: "postgres://eventplatform:eventplatform@postgres:5432/eventplatform?sslmode=disable"
+      NOTIFICATION_GRPC_ADDR: "notification:50052"
+      FALLBACK_THRESHOLD: "1000.0"
+      DEVIATION_MULTIPLIER: "1.5"
+      REDIS_WINDOW_SIZE: "10"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger:4317"
+      OTEL_SERVICE_NAME: "processing-service"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      notification:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    networks:
+      - event-net
+
+  ingestion:
+    image: event-platform/ingestion:latest
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    container_name: ingestion
+    environment:
+      KAFKA_BROKERS: "kafka:29092"
+      KAFKA_TOPIC: "events"
+      KAFKA_CONSUMER_GROUP: "ingestion-service-group"
+      PROCESSING_ADDR: "processing:50051"
+      HEALTH_PORT: "8080"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger:4317"
+      OTEL_SERVICE_NAME: "ingestion-service"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      processing:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    networks:
+      - event-net
+
+networks:
+  event-net:
+    driver: bridge

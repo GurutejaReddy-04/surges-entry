@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package event;
+
+option go_package = "event-platform/proto/gen/event;eventpb";
+
+message Event {
+  string user_id = 1;
+  string event_type = 2;
+  double value = 3;
+  int64 timestamp = 4;
+  string trace_id = 5;
+}
+
+message ProcessResponse {
+  bool success = 1;
+  string message = 2;
+  int64 processed_at = 3;
+  bool is_anomaly = 4;
+}
+
+service ProcessingService {
+  rpc ProcessEvent(Event) returns (ProcessResponse);
+}
+
+message AlertRequest {
+  string user_id = 1;
+  string event_type = 2;
+  double event_value = 3;
+  bool is_anomaly = 4;
+  string trace_id = 5;
+  int64 timestamp = 6;
+}
+
+message AlertResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+service NotificationService {
+  rpc SendAlert(AlertRequest) returns (AlertResponse);
+}

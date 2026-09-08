@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: event-platform
+data:
+  # Route external dependencies on the local machine using host.docker.internal.
+  # For Minikube with docker driver, you can alternatively use host.minikube.internal or $(minikube ip).
+  KAFKA_BROKERS: "host.docker.internal:9092"
+  KAFKA_TOPIC: "events"
+  KAFKA_CONSUMER_GROUP: "k8s-ingestion-group"
+
+  # In-cluster service-to-service gRPC endpoints (ClusterIP DNS)
+  PROCESSING_ADDR: "processing-service:50051"
+  NOTIFICATION_GRPC_ADDR: "notification-service:50052"
+
+  # External stateful caches running in Docker Compose on the host
+  REDIS_ADDR: "host.docker.internal:6379"
+
+  # Two-tier anomaly detection configuration
+  FALLBACK_THRESHOLD: "1000.0"
+  DEVIATION_MULTIPLIER: "1.5"
+  REDIS_WINDOW_SIZE: "10"
+
+  # Observability
+  OTEL_EXPORTER_OTLP_ENDPOINT: "host.docker.internal:4317"
+
+  # Service port settings
+  HEALTH_PORT: "8080"
