@@ -21,6 +21,13 @@
 - **Hardened Kubernetes Deployment**: Non-root container security contexts (UID 10001), health probes, and ConfigMap routing.
 - **Automated Resilience Demos**: Automated consumer kill-and-replay and historical offset replay verification suites.
 
+## 📖 Documentation Site
+
+A static documentation site is available at:  
+**[https://GurutejaReddy-04.github.io/surges-entry/](https://GurutejaReddy-04.github.io/surges-entry/)**
+
+This site provides a quick overview, architecture diagrams, and deployment guides.
+
 ## Documentation
 - [Architecture Overview](docs/architecture.md)
 - [API Reference](proto/event.proto)
@@ -243,7 +250,7 @@ func InitTelemetry(ctx context.Context, serviceName string, logger *slog.Logger)
 - Inbound gRPC: `grpc.StatsHandler(otelgrpc.NewServerHandler())`
 
 ### Inspecting Traces in Jaeger UI
-1. Navigate to: `http://localhost:16686`
+1. Navigate to the Jaeger UI endpoint (e.g., `http://<jaeger-host>:16686`).
 2. Select Service: `notification-service` or `processing-service`
 3. Click **Find Traces** to view end-to-end flame graphs, span tags, and network latencies.
 
