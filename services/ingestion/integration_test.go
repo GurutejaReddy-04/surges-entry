@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 
 	"github.com/IBM/sarama"
 	"google.golang.org/grpc"

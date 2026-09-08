@@ -1,15 +1,16 @@
+# SurgesEntry — Distributed Event Processing Platform
 .PHONY: build-all build-ingestion build-processing build-notification test-all up down ps
 
 build-all: build-ingestion build-processing build-notification
 
 build-ingestion:
-	docker build -t event-platform/ingestion:latest -f services/ingestion/Dockerfile .
+	docker build -t surges-entry/ingestion:latest -f services/ingestion/Dockerfile .
 
 build-processing:
-	docker build -t event-platform/processing:latest -f services/processing/Dockerfile .
+	docker build -t surges-entry/processing:latest -f services/processing/Dockerfile .
 
 build-notification:
-	docker build -t event-platform/notification:latest -f services/notification/Dockerfile .
+	docker build -t surges-entry/notification:latest -f services/notification/Dockerfile .
 
 test-all:
 	go test -v ./services/notification/...

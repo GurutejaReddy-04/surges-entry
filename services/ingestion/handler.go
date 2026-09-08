@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 
 	"github.com/IBM/sarama"
 	"go.opentelemetry.io/otel"

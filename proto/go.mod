@@ -1,4 +1,4 @@
-module event-platform/proto
+module surges-entry/proto
 
 go 1.22.0
 

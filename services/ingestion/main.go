@@ -1,3 +1,5 @@
+// Package main provides the SurgesEntry Ingestion Service.
+// This service consumes events from Kafka and forwards them to the Processing Service via gRPC.
 package main
 
 import (
@@ -9,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 
 	"github.com/IBM/sarama"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"

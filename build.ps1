@@ -1,17 +1,19 @@
-# Build all 3 microservice Docker images
+# SurgesEntry — Build all 3 microservice Docker images
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
-Write-Host "Building Ingestion Service image..." -ForegroundColor Cyan
-docker build -t event-platform/ingestion:latest -f services/ingestion/Dockerfile .
+$images = @(
+    @{ Name = "ingestion"; Path = "services/ingestion/Dockerfile"; Tag = "surges-entry/ingestion:latest" },
+    @{ Name = "processing"; Path = "services/processing/Dockerfile"; Tag = "surges-entry/processing:latest" },
+    @{ Name = "notification"; Path = "services/notification/Dockerfile"; Tag = "surges-entry/notification:latest" }
+)
 
-Write-Host "Building Processing Service image..." -ForegroundColor Cyan
-docker build -t event-platform/processing:latest -f services/processing/Dockerfile .
+foreach ($img in $images) {
+    Write-Host "Building $($img.Name) Service image ($($img.Tag))..." -ForegroundColor Cyan
+    docker build -t $img.Tag -f $img.Path .
+}
 
-Write-Host "Building Notification Service image..." -ForegroundColor Cyan
-docker build -t event-platform/notification:latest -f services/notification/Dockerfile .
-
-Write-Host "`nAll images built successfully!" -ForegroundColor Green
-docker images | Select-String "event-platform"
+Write-Host "`nAll SurgesEntry images built successfully!" -ForegroundColor Green
+docker images | Select-String "surges-entry"

@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: ingestion-service
-  namespace: event-platform
+  name: surges-entry-ingestion
+  namespace: surges-entry
   labels:
-    app: ingestion-service
+    app: surges-entry-ingestion
 spec:
   type: ClusterIP
   selector:
-    app: ingestion-service
+    app: surges-entry-ingestion
   ports:
     - name: health
       port: 8080

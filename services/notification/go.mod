@@ -1,15 +1,15 @@
-module event-platform/services/notification
+module surges-entry/services/notification
 
 go 1.22.0
 
 require (
-	event-platform/proto v0.0.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.53.0
 	go.opentelemetry.io/otel v1.28.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.28.0
 	go.opentelemetry.io/otel/sdk v1.28.0
 	go.opentelemetry.io/otel/trace v1.28.0
 	google.golang.org/grpc v1.65.0
+	surges-entry/proto v0.0.0
 )
 
 require (
@@ -29,4 +29,4 @@ require (
 	google.golang.org/protobuf v1.34.2 // indirect
 )
 
-replace event-platform/proto => ../../proto
+replace surges-entry/proto => ../../proto

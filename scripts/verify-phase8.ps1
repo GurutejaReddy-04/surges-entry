@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# Phase 8 Verification: OpenTelemetry distributed tracing & Jaeger validation
+# SurgesEntry — Phase 8 Verification: OpenTelemetry distributed tracing & Jaeger validation
 $ErrorActionPreference = "Continue"
 $failed = 0
 
@@ -11,7 +11,7 @@ function Fail([string]$msg) { $script:failed++; Write-Host "  FAIL  $msg" -Foreg
 
 # 1. Container health
 Step "1/5" "Verify container health"
-$services = @("kafka", "redis", "postgres", "jaeger", "notification", "processing", "ingestion")
+$services = @("kafka", "redis", "postgres", "jaeger", "surges-entry-notification", "surges-entry-processing", "surges-entry-ingestion")
 foreach ($s in $services) {
     $status = docker inspect --format '{{.State.Health.Status}}' $s 2>$null
     if ($status -eq "healthy") {

@@ -1,8 +1,10 @@
+// SurgesEntry — Distributed Event Processing Platform
+// Protocol Buffer definitions for event processing services.
 syntax = "proto3";
 
 package event;
 
-option go_package = "event-platform/proto/gen/event;eventpb";
+option go_package = "surges-entry/proto/gen/event;eventpb";
 
 message Event {
   string user_id = 1;

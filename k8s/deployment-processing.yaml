@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: processing-service
-  namespace: event-platform
+  name: surges-entry-processing
+  namespace: surges-entry
   labels:
-    app: processing-service
+    app: surges-entry-processing
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: processing-service
+      app: surges-entry-processing
   template:
     metadata:
       labels:
-        app: processing-service
+        app: surges-entry-processing
     spec:
       securityContext:
         runAsNonRoot: true
@@ -21,8 +21,8 @@ spec:
         runAsGroup: 10001
         fsGroup: 10001
       containers:
-        - name: processing-service
-          image: event-platform/processing:latest
+        - name: surges-entry-processing
+          image: surges-entry/processing:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -54,20 +54,24 @@ spec:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 200m
+              cpu: 500m
               memory: 256Mi
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 3
-            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
       volumes:
         - name: tmp-dir
           emptyDir: {}

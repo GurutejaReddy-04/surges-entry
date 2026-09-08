@@ -1,10 +1,10 @@
-# Deploy Distributed Event Processing Platform to Kubernetes
+# Deploy SurgesEntry to Kubernetes
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
-Write-Host "=== Phase 6: Kubernetes Deployment ===" -ForegroundColor Cyan
+Write-Host "=== SurgesEntry: Kubernetes Deployment ===" -ForegroundColor Cyan
 
 # 1. Verify cluster connectivity
 if (-not (Get-Command kubectl -ErrorAction SilentlyContinue)) {
@@ -26,9 +26,9 @@ Write-Host "Current Kubernetes context: $currentContext" -ForegroundColor Yellow
 
 if ($currentContext -match "minikube") {
     Write-Host "Loading images into Minikube..." -ForegroundColor Yellow
-    minikube image load event-platform/ingestion:latest
-    minikube image load event-platform/processing:latest
-    minikube image load event-platform/notification:latest
+    minikube image load surges-entry/ingestion:latest
+    minikube image load surges-entry/processing:latest
+    minikube image load surges-entry/notification:latest
     Write-Host "Images loaded into Minikube!" -ForegroundColor Green
 }
 
@@ -46,13 +46,13 @@ kubectl apply -f service-ingestion.yaml
 
 # 4. Wait for rollouts
 Write-Host "`nWaiting for pods to be Ready (timeout: 120s)..." -ForegroundColor Yellow
-kubectl -n event-platform wait --for=condition=ready pod -l app=notification-service --timeout=120s
-kubectl -n event-platform wait --for=condition=ready pod -l app=processing-service --timeout=120s
-kubectl -n event-platform wait --for=condition=ready pod -l app=ingestion-service --timeout=120s
+kubectl -n surges-entry wait --for=condition=ready pod -l app=surges-entry-notification --timeout=120s
+kubectl -n surges-entry wait --for=condition=ready pod -l app=surges-entry-processing --timeout=120s
+kubectl -n surges-entry wait --for=condition=ready pod -l app=surges-entry-ingestion --timeout=120s
 
 Write-Host "`n=== Deployment Status ===" -ForegroundColor Green
-kubectl -n event-platform get pods -o wide
+kubectl -n surges-entry get pods -o wide
 Write-Host ""
-kubectl -n event-platform get svc -o wide
+kubectl -n surges-entry get svc -o wide
 
 Write-Host "`nAll 3 microservices are deployed and healthy in Kubernetes!" -ForegroundColor Green

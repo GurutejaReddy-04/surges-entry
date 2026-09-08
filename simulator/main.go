@@ -1,3 +1,5 @@
+// Package main provides the SurgesEntry Traffic Simulator.
+// This simulator generates synthetic user event streams with injected anomalies for ingestion verification.
 package main
 
 import (

@@ -1,4 +1,4 @@
-module event-platform/simulator
+module surges-entry/simulator
 
 go 1.22.0
 

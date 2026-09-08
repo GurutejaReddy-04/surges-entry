@@ -1,11 +1,11 @@
-# Phase 7 — Consumer Kill & Replay Resilience Demo
+# SurgesEntry — Consumer Kill & Replay Resilience Demo
 # Proves Kafka's durable partition log and Kubernetes self-healing.
 # We kill the Ingestion Service pod mid-stream and prove zero data loss.
 
 param(
     [string]$PostgresUser = "eventplatform",
     [string]$PostgresDb = "eventplatform",
-    [string]$Namespace = "event-platform"
+    [string]$Namespace = "surges-entry"
 )
 
 $ErrorActionPreference = "Continue"
@@ -47,7 +47,7 @@ function Publish-KafkaEvent([string]$userID, [string]$eventType, [double]$val, [
 }
 
 Write-Host "============================================================" -ForegroundColor Yellow
-Write-Host "  🚀 PHASE 7: CONSUMER KILL & REPLAY RESILIENCE DEMO       " -ForegroundColor Yellow
+Write-Host "  🚀 SurgesEntry: Consumer Kill & Replay Resilience Demo   " -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Yellow
 
 # Validates fault-tolerance and zero data loss under abrupt consumer termination.
@@ -60,23 +60,26 @@ if ($kafkaCheck -match "events") {
     Log-Fail "Kafka topic 'events' not found. Ensure docker-compose is running."
 }
 
-# Check if running in Kubernetes or Docker Compose fallback
+# Determine execution mode (Kubernetes vs Docker Compose)
 $useK8s = $false
-$podCheck = kubectl -n $Namespace get pods -l app=ingestion-service -o jsonpath='{.items[0].status.phase}' 2>$null
-if ($podCheck -eq "Running") {
+$k8sPods = kubectl -n $Namespace get pods -l app=surges-entry-ingestion -o jsonpath='{.items[*].metadata.name}' 2>$null
+if ($k8sPods -and $k8sPods.Trim() -ne "") {
     $useK8s = $true
-    Log-Pass "Ingestion Service is Running in Kubernetes (namespace: $Namespace)"
+    Log-Pass "Targeting Kubernetes deployment in namespace '$Namespace'"
 } else {
-    $containerCheck = docker inspect --format '{{.State.Status}}' ingestion 2>$null
-    if ($containerCheck -eq "running") {
-        Log-Pass "Ingestion Service is running as local container (Docker Compose fallback mode)"
+    $ingRunning = docker inspect --format '{{.State.Running}}' surges-entry-ingestion 2>$null
+    if ($ingRunning -ne "true") {
+        $ingRunning = docker inspect --format '{{.State.Running}}' ingestion 2>$null
+    }
+    if ($ingRunning -eq "true") {
+        Log-Pass "Targeting Docker Compose deployment ('surges-entry-ingestion')"
     } else {
-        Log-Fail "No running Ingestion service found in Kubernetes or Docker Compose."
+        Log-Fail "Neither Kubernetes pod nor Docker container 'surges-entry-ingestion' is running."
     }
 }
 
-# ── Step 2: Publish Baseline Batch (10 Events) ──────────────────────────────
-Log-Step "2/6" "Publishing 10 baseline events to Kafka (events 1-10)..."
+# ── Step 2: Publish Baseline Events ──────────────────────────────────────────
+Log-Step "2/6" "Publishing 10 baseline events to Kafka topic 'events'..."
 
 for ($i = 1; $i -le 10; $i++) {
     $val = 100.0 + ($i * 5.0)
@@ -109,35 +112,38 @@ if ($count1 -ge 10) {
 Log-Step "4/6" "💀 KILLING INGESTION SERVICE MID-STREAM..."
 
 if ($useK8s) {
-    $victimPod = (kubectl -n $Namespace get pods -l app=ingestion-service -o jsonpath='{.items[0].metadata.name}').Trim()
+    $victimPod = (kubectl -n $Namespace get pods -l app=surges-entry-ingestion -o jsonpath='{.items[0].metadata.name}').Trim()
     Write-Host "  Targeting pod: $victimPod" -ForegroundColor Red
     kubectl -n $Namespace delete pod $victimPod --now 2>$null | Out-Null
     Write-Host "  Pod deletion issued." -ForegroundColor DarkYellow
 } else {
-    Write-Host "  Stopping container 'ingestion'..." -ForegroundColor Red
+    Write-Host "  Stopping container 'surges-entry-ingestion'..." -ForegroundColor Red
+    docker stop surges-entry-ingestion 2>$null | Out-Null
     docker stop ingestion 2>$null | Out-Null
 }
 
-# ── Step 5: Publish Events While Consumer is Dead ────────────────────────────
-Log-Step "5/6" "Publishing 5 events while Ingestion Service is DOWN (events 11-15)..."
+# ── Step 5: Publish Events During Outage ─────────────────────────────────────
+Log-Step "5/6" "Publishing 5 events while Ingestion Service is DOWN..."
 
-for ($i = 11; $i -le 15; $i++) {
-    $val = 100.0 + ($i * 10.0)
+for ($i = 1; $i -le 5; $i++) {
+    $val = 300.0 + ($i * 10.0)
     $trace = "$runID-part2-$i"
     Publish-KafkaEvent -userID $user -eventType "downtime-buffer" -val $val -traceID $trace
     Start-Sleep -Milliseconds 50
 }
-Log-Pass "5 events safely buffered in Kafka durable partition log during outage"
 
-# ── Step 6: Wait for Recovery & Confirm Zero Data Loss ───────────────────────
-Log-Step "6/6" "Waiting for self-healing recovery and offset catch-up..."
+Log-Pass "5 events safely published into Kafka partition buffer while Ingestion was dead!"
+
+# ── Step 6: Self-Healing & Catch-Up Verification ─────────────────────────────
+Log-Step "6/6" "Waiting for Ingestion Service to recover and catch up..."
 
 if ($useK8s) {
     Write-Host "  Waiting for Kubernetes to self-heal and mark new pod Ready..." -ForegroundColor Yellow
-    kubectl -n $Namespace wait --for=condition=ready pod -l app=ingestion-service --timeout=60s 2>$null | Out-Null
+    kubectl -n $Namespace wait --for=condition=ready pod -l app=surges-entry-ingestion --timeout=60s 2>$null | Out-Null
     Log-Pass "Kubernetes restarted Ingestion Service; new pod is Ready!"
 } else {
-    Write-Host "  Restarting container 'ingestion'..." -ForegroundColor Yellow
+    Write-Host "  Restarting container 'surges-entry-ingestion'..." -ForegroundColor Yellow
+    docker start surges-entry-ingestion 2>$null | Out-Null
     docker start ingestion 2>$null | Out-Null
     Start-Sleep -Seconds 5
     Log-Pass "Ingestion container restarted!"

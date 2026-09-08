@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: notification-service
-  namespace: event-platform
+  name: surges-entry-notification
+  namespace: surges-entry
   labels:
-    app: notification-service
+    app: surges-entry-notification
 spec:
   type: ClusterIP
   selector:
-    app: notification-service
+    app: surges-entry-notification
   ports:
     - name: grpc
       port: 50052

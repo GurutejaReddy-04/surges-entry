@@ -21,6 +21,6 @@ fi
 
 mkdir -p gen/event
 
-protoc --go_out=. --go_opt=module=event-platform/proto --go-grpc_out=. --go-grpc_opt=module=event-platform/proto event.proto
+protoc --go_out=. --go_opt=module=surges-entry/proto --go-grpc_out=. --go-grpc_opt=module=surges-entry/proto event.proto
 
 echo "Successfully generated gRPC stubs in proto/gen/event"

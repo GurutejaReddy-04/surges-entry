@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 )
 
 type rawEvent struct {

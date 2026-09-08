@@ -1,14 +1,14 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: processing-service
-  namespace: event-platform
+  name: surges-entry-processing
+  namespace: surges-entry
   labels:
-    app: processing-service
+    app: surges-entry-processing
 spec:
   type: ClusterIP
   selector:
-    app: processing-service
+    app: surges-entry-processing
   ports:
     - name: grpc
       port: 50051

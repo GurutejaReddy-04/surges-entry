@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Phase 7 — Consumer Kill & Replay Resilience Demo
+# SurgesEntry — Consumer Kill & Replay Resilience Demo
 # Proves Kafka's durable partition log and Kubernetes self-healing.
 # We kill the Ingestion Service pod mid-stream and prove zero data loss.
 
 set -euo pipefail
 
-NAMESPACE="${NAMESPACE:-event-platform}"
+NAMESPACE="${NAMESPACE:-surges-entry}"
 POSTGRES_USER="eventplatform"
 POSTGRES_DB="eventplatform"
 
@@ -45,7 +45,7 @@ publish_event() {
 }
 
 echo -e "\033[1;33m============================================================\033[0m"
-echo -e "\033[1;33m  🚀 PHASE 7: CONSUMER KILL & REPLAY RESILIENCE DEMO        \033[0m"
+echo -e "\033[1;33m  🚀 SurgesEntry: Consumer Kill & Replay Resilience Demo    \033[0m"
 echo -e "\033[1;33m============================================================\033[0m"
 
 # Validates fault-tolerance and zero data loss under abrupt consumer termination.
@@ -62,11 +62,13 @@ else
 fi
 
 USE_K8S=false
-if kubectl -n "$NAMESPACE" get pods -l app=ingestion-service 2>/dev/null | grep -q "Running"; then
+if kubectl -n "$NAMESPACE" get pods -l app=surges-entry-ingestion 2>/dev/null | grep -q "Running"; then
     USE_K8S=true
     log_pass "Ingestion Service is Running in Kubernetes (namespace: $NAMESPACE)"
+elif docker inspect --format '{{.State.Status}}' surges-entry-ingestion 2>/dev/null | grep -q "running"; then
+    log_pass "Ingestion Service is running in Docker Compose ('surges-entry-ingestion')"
 elif docker inspect --format '{{.State.Status}}' ingestion 2>/dev/null | grep -q "running"; then
-    log_pass "Ingestion Service is running in Docker Compose (local fallback)"
+    log_pass "Ingestion Service is running in Docker Compose ('ingestion')"
 else
     log_fail "No active Ingestion service detected in Kubernetes or Docker Compose."
 fi
@@ -96,13 +98,13 @@ fi
 
 log_step "4/6" "💀 KILLING INGESTION SERVICE MID-STREAM..."
 if [ "$USE_K8S" = true ]; then
-    victim_pod=$(kubectl -n "$NAMESPACE" get pods -l app=ingestion-service -o jsonpath='{.items[0].metadata.name}')
+    victim_pod=$(kubectl -n "$NAMESPACE" get pods -l app=surges-entry-ingestion -o jsonpath='{.items[0].metadata.name}')
     echo -e "  Targeting pod: \033[1;31m$victim_pod\033[0m"
     kubectl -n "$NAMESPACE" delete pod "$victim_pod" --now 2>/dev/null || true
     echo "  Pod deletion issued."
 else
-    echo -e "  Stopping container \033[1;31mingestion\033[0m..."
-    docker stop ingestion >/dev/null 2>&1 || true
+    echo -e "  Stopping container \033[1;31msurges-entry-ingestion\033[0m..."
+    docker stop surges-entry-ingestion >/dev/null 2>&1 || docker stop ingestion >/dev/null 2>&1 || true
 fi
 
 log_step "5/6" "Publishing 5 events while Ingestion Service is DOWN (events 11-15)..."
@@ -117,38 +119,40 @@ log_pass "5 events safely buffered in Kafka durable partition log during outage"
 log_step "6/6" "Waiting for self-healing recovery and offset catch-up..."
 if [ "$USE_K8S" = true ]; then
     echo "  Waiting for Kubernetes self-healing..."
-    kubectl -n "$NAMESPACE" wait --for=condition=ready pod -l app=ingestion-service --timeout=60s
+    kubectl -n "$NAMESPACE" wait --for=condition=ready pod -l app=surges-entry-ingestion --timeout=60s
     log_pass "Kubernetes restarted Ingestion Service; new pod is Ready!"
 else
-    echo "  Restarting container ingestion..."
-    docker start ingestion >/dev/null 2>&1
+    echo "  Restarting container surges-entry-ingestion..."
+    docker start surges-entry-ingestion >/dev/null 2>&1 || docker start ingestion >/dev/null 2>&1
     sleep 5
     log_pass "Ingestion container restarted!"
 fi
 
 echo "  Checking PostgreSQL for recovery of all 15 events..."
 total_count=0
-for _ in $(seq 1 15); do
+for _ in $(seq 1 20); do
     sleep 1
-    total_count=$(query_db_count)
+    total_count=$(query_db_count "")
     if [ "$total_count" -ge 15 ]; then break; fi
 done
 
 part2_count=$(query_db_count "downtime-buffer")
 
-echo -e "\n\033[1;33m============================================================\033[0m"
+echo ""
+echo -e "\033[1;33m============================================================\033[0m"
 echo -e "\033[1;33m  DEMO METRICS & VERIFICATION SUMMARY                       \033[0m"
 echo -e "\033[1;33m============================================================\033[0m"
 echo "  Events published before kill : 10"
 echo "  Events published during kill : 5"
 echo "  Total events published       : 15"
-echo "  Total events in PostgreSQL   : $total_count"
-echo "  Events recovered from outage : $part2_count / 5"
+echo "  Total events in PostgreSQL   : ${total_count}"
+echo "  Events recovered from outage : ${part2_count} / 5"
 echo "  Missing events               : $((15 - total_count))"
 
-if [ "$total_count" -eq 15 ]; then
-    log_pass "ZERO DATA LOSS CONFIRMED! Kafka offset resumption and Kubernetes self-healing verified."
+if [ "$total_count" -ge 15 ] && [ "$part2_count" -ge 5 ]; then
+    echo -e "\n\033[1;32m🚀 PASS: ZERO DATA LOSS CONFIRMED! Kafka offset resumption and Kubernetes self-healing verified.\033[0m\n"
     exit 0
 else
-    log_fail "Data loss detected: Expected 15 events, but only $total_count arrived in PostgreSQL."
+    echo -e "\n\033[1;31m💀 FAIL: Data loss detected! Expected 15 events, recovered ${total_count}.\033[0m\n"
+    exit 1
 fi

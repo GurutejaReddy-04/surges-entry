@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"

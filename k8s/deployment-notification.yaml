@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: notification-service
-  namespace: event-platform
+  name: surges-entry-notification
+  namespace: surges-entry
   labels:
-    app: notification-service
+    app: surges-entry-notification
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: notification-service
+      app: surges-entry-notification
   template:
     metadata:
       labels:
-        app: notification-service
+        app: surges-entry-notification
     spec:
       securityContext:
         runAsNonRoot: true
@@ -21,8 +21,8 @@ spec:
         runAsGroup: 10001
         fsGroup: 10001
       containers:
-        - name: notification-service
-          image: event-platform/notification:latest
+        - name: surges-entry-notification
+          image: surges-entry/notification:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -49,20 +49,24 @@ spec:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 200m
+              cpu: 500m
               memory: 256Mi
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 3
-            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
       volumes:
         - name: tmp-dir
           emptyDir: {}

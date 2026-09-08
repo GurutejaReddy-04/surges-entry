@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: event-platform
+  name: surges-entry
   labels:
-    app.kubernetes.io/name: event-platform
-    app.kubernetes.io/part-of: distributed-event-processing-platform
+    app.kubernetes.io/name: surges-entry
+    app.kubernetes.io/part-of: surges-entry

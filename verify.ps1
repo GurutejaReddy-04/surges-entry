@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
-# Phase 1 verification: container health, Kafka CLI, simulator, partition affinity.
-# Run from the event-platform/ directory after `docker-compose up -d`.
+# SurgesEntry — Phase 1 verification: container health, Kafka CLI, simulator, partition affinity.
+# Run from the surges-entry directory after `docker-compose up -d`.
 
 param(
     [int]$SimulatorSeconds = 15

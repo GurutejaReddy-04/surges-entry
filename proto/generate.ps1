@@ -24,7 +24,7 @@ if (-not (Test-Path $outDir)) {
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 }
 
-protoc --go_out=. --go_opt=module=event-platform/proto --go-grpc_out=. --go-grpc_opt=module=event-platform/proto event.proto
+protoc --go_out=. --go_opt=module=surges-entry/proto --go-grpc_out=. --go-grpc_opt=module=surges-entry/proto event.proto
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Successfully generated gRPC stubs in proto/gen/event" -ForegroundColor Green

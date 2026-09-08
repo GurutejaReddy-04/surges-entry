@@ -1,8 +1,9 @@
-# EventFlow Architecture & Design Specification
+# SurgesEntry — Architecture Overview
+> *Distributed Event Processing Platform*
 
 ## 1. System Overview
 
-**EventFlow** is a production-grade, distributed stream processing platform engineered in Go. It ingests high-throughput telemetry events, computes per-user real-time sliding window statistics in an in-memory cache, executes two-tier anomaly detection, writes immutable audit trails to persistent storage, and propagates distributed traces end-to-end across a gRPC microservice mesh.
+**SurgesEntry** is a production-grade, distributed stream processing platform engineered in Go. It ingests high-throughput telemetry events, computes per-user real-time sliding window statistics in an in-memory cache, executes two-tier anomaly detection, writes immutable audit trails to persistent storage, and propagates distributed traces end-to-end across a gRPC microservice mesh.
 
 ```mermaid
 flowchart TD

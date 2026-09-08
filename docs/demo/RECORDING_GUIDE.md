@@ -1,6 +1,6 @@
-# Resilience Proof: Screen Recording Guide
+# SurgesEntry Resilience Proof: Screen Recording Guide
 
-This guide explains how to capture a clean, professional demo recording of the **Consumer Kill & Replay** resilience test for portfolio showcases or technical interviews.
+This guide explains how to capture a clean, professional demo recording of the **Consumer Kill & Replay** resilience test for portfolio showcases or technical reviews.
 
 ---
 
@@ -25,11 +25,11 @@ Open two terminal windows side-by-side:
 │ LEFT TERMINAL: Live Service Logs      │ RIGHT TERMINAL: Automated Demo Script │
 │                                       │                                       │
 │ # Kubernetes mode:                    │ powershell                            │
-│ kubectl -n event-platform logs -f     │ cd event-platform                     │
-│   deployment/ingestion-service        │ ./scripts/kill-replay-demo.ps1        │
+│ kubectl -n surges-entry logs -f       │ cd surges-entry                       │
+│   deployment/surges-entry-ingestion   │ ./scripts/kill-replay-demo.ps1        │
 │                                       │                                       │
 │ # Or Docker Compose mode:             │                                       │
-│ docker logs -f ingestion              │                                       │
+│ docker logs -f surges-entry-ingestion │                                       │
 └───────────────────────────────────────┴───────────────────────────────────────┘
 ```
 

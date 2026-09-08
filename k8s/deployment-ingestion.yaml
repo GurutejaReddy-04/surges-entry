@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ingestion-service
-  namespace: event-platform
+  name: surges-entry-ingestion
+  namespace: surges-entry
   labels:
-    app: ingestion-service
+    app: surges-entry-ingestion
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: ingestion-service
+      app: surges-entry-ingestion
   template:
     metadata:
       labels:
-        app: ingestion-service
+        app: surges-entry-ingestion
     spec:
       securityContext:
         runAsNonRoot: true
@@ -21,8 +21,8 @@ spec:
         runAsGroup: 10001
         fsGroup: 10001
       containers:
-        - name: ingestion-service
-          image: event-platform/ingestion:latest
+        - name: surges-entry-ingestion
+          image: surges-entry/ingestion:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -44,20 +44,24 @@ spec:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 200m
+              cpu: 500m
               memory: 256Mi
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 3
-            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
       volumes:
         - name: tmp-dir
           emptyDir: {}

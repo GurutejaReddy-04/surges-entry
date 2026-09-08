@@ -1,9 +1,8 @@
-module event-platform/services/processing
+module surges-entry/services/processing
 
 go 1.22.0
 
 require (
-	event-platform/proto v0.0.0
 	github.com/jackc/pgx/v5 v5.6.0
 	github.com/redis/go-redis/v9 v9.6.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.53.0
@@ -12,6 +11,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.28.0
 	go.opentelemetry.io/otel/trace v1.28.0
 	google.golang.org/grpc v1.65.0
+	surges-entry/proto v0.0.0
 )
 
 require (
@@ -38,4 +38,4 @@ require (
 	google.golang.org/protobuf v1.34.2 // indirect
 )
 
-replace event-platform/proto => ../../proto
+replace surges-entry/proto => ../../proto

@@ -1,6 +1,6 @@
-# Kubernetes Deployment (Phase 6)
+# SurgesEntry — Kubernetes Deployment
 
-Stateless Go microservices deployed into Kubernetes (`event-platform` namespace) with health probes, horizontal scaling, and ConfigMap routing to external stateful dependencies.
+Stateless Go microservices deployed into Kubernetes (`surges-entry` namespace) with health probes, horizontal scaling, and ConfigMap routing to external stateful dependencies.
 
 ---
 
@@ -9,7 +9,7 @@ Stateless Go microservices deployed into Kubernetes (`event-platform` namespace)
 Stateful infrastructure (Kafka KRaft, Redis, PostgreSQL, Jaeger) runs externally in Docker Compose on the host. This avoids managing in-cluster StatefulSets and PersistentVolumes for storage engines while showcasing production-grade microservice orchestration.
 
 ```
-Host (Docker Compose)                   Kubernetes Cluster (event-platform namespace)
+Host (Docker Compose)                   Kubernetes Cluster (surges-entry namespace)
 ┌───────────────────────────┐           ┌──────────────────────────────────────────────┐
 │  Kafka      (:9092)       │ ◄──────── │  Ingestion Pods   (Deployment)               │
 │  Redis      (:6379)       │ ◄────┐    │        │ (gRPC)                              │
@@ -31,13 +31,14 @@ Host (Docker Compose)                   Kubernetes Cluster (event-platform names
 
 | File | Type | Purpose |
 |---|---|---|
-| `namespace.yaml` | Namespace | Creates `event-platform` namespace |
+| `namespace.yaml` | Namespace | Creates `surges-entry` namespace |
 | `configmap.yaml` | ConfigMap | Environment variables for Kafka, Redis, Postgres, and service URLs |
-| `deployment-notification.yaml` | Deployment | Runs `notification-service` with readiness/liveness probes |
+| `secret.yaml` | Secret | Base64/plain credentials for PostgreSQL |
+| `deployment-notification.yaml` | Deployment | Runs `surges-entry-notification` with readiness/liveness probes |
 | `service-notification.yaml` | Service | ClusterIP exposing `:50052` (gRPC) and `:8080` (health) |
-| `deployment-processing.yaml` | Deployment | Runs `processing-service` (1–3 replicas) |
+| `deployment-processing.yaml` | Deployment | Runs `surges-entry-processing` (1–3 replicas) |
 | `service-processing.yaml` | Service | ClusterIP exposing `:50051` (gRPC) and `:8080` (health) |
-| `deployment-ingestion.yaml` | Deployment | Runs `ingestion-service` consuming from Kafka |
+| `deployment-ingestion.yaml` | Deployment | Runs `surges-entry-ingestion` consuming from Kafka |
 | `service-ingestion.yaml` | Service | ClusterIP exposing `:8080` (health) |
 
 ---
@@ -74,15 +75,15 @@ cd k8s
 
 ## Manual Scaling Demonstration
 
-HPA was intentionally omitted to focus on demonstrating that the Section 8.2 Redis `TxPipeline` atomicity guarantees hold across multiple concurrent processing replicas:
+Redis `TxPipeline` atomicity guarantees hold across multiple concurrent processing replicas:
 
 ```powershell
 # Scale processing service to 3 replicas
-kubectl -n event-platform scale deployment/processing-service --replicas=3
+kubectl -n surges-entry scale deployment/surges-entry-processing --replicas=3
 
 # Verify all 3 pods are running and ready
-kubectl -n event-platform get pods -l app=processing-service
+kubectl -n surges-entry get pods -l app=surges-entry-processing
 
 # Watch concurrent load distribution across pods
-kubectl -n event-platform logs -f -l app=processing-service --max-log-requests=10 --tail=20
+kubectl -n surges-entry logs -f -l app=surges-entry-processing --max-log-requests=10 --tail=20
 ```

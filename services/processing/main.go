@@ -1,3 +1,5 @@
+// Package main provides the SurgesEntry Processing Service.
+// This service evaluates real-time sliding window statistics, executes two-tier anomaly detection, and logs audit events.
 package main
 
 import (
@@ -11,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"

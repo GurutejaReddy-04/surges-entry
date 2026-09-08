@@ -1,3 +1,5 @@
+// Package main provides the SurgesEntry Notification Service.
+// This service receives anomaly alerts over gRPC and emits structured alert telemetry.
 package main
 
 import (
@@ -10,7 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"

@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "=== Phase 6: Kubernetes Deployment ==="
+echo "=== SurgesEntry: Kubernetes Deployment ==="
 
 if ! command -v kubectl &> /dev/null; then
     echo "Error: kubectl not found on PATH." >&2
@@ -19,9 +19,9 @@ echo "Current Kubernetes context: ${CURRENT_CONTEXT}"
 
 if [[ "${CURRENT_CONTEXT}" == *"minikube"* ]]; then
     echo "Loading images into Minikube..."
-    minikube image load event-platform/ingestion:latest
-    minikube image load event-platform/processing:latest
-    minikube image load event-platform/notification:latest
+    minikube image load surges-entry/ingestion:latest
+    minikube image load surges-entry/processing:latest
+    minikube image load surges-entry/notification:latest
     echo "Images loaded into Minikube!"
 fi
 
@@ -37,15 +37,15 @@ kubectl apply -f deployment-ingestion.yaml
 kubectl apply -f service-ingestion.yaml
 
 echo "Waiting for pods to be Ready (timeout: 120s)..."
-kubectl -n event-platform wait --for=condition=ready pod -l app=notification-service --timeout=120s
-kubectl -n event-platform wait --for=condition=ready pod -l app=processing-service --timeout=120s
-kubectl -n event-platform wait --for=condition=ready pod -l app=ingestion-service --timeout=120s
+kubectl -n surges-entry wait --for=condition=ready pod -l app=surges-entry-notification --timeout=120s
+kubectl -n surges-entry wait --for=condition=ready pod -l app=surges-entry-processing --timeout=120s
+kubectl -n surges-entry wait --for=condition=ready pod -l app=surges-entry-ingestion --timeout=120s
 
 echo ""
 echo "=== Deployment Status ==="
-kubectl -n event-platform get pods -o wide
+kubectl -n surges-entry get pods -o wide
 echo ""
-kubectl -n event-platform get svc -o wide
+kubectl -n surges-entry get svc -o wide
 
 echo ""
 echo "All 3 microservices are deployed and healthy in Kubernetes!"

@@ -1,10 +1,11 @@
+# SurgesEntry — Microservice Stack (Local Docker Compose)
 services:
   notification:
-    image: event-platform/notification:latest
+    image: surges-entry/notification:latest
     build:
       context: .
       dockerfile: services/notification/Dockerfile
-    container_name: notification
+    container_name: surges-entry-notification
     ports:
       - "50052:50052"
     environment:
@@ -19,11 +20,11 @@ services:
       - event-net
 
   processing:
-    image: event-platform/processing:latest
+    image: surges-entry/processing:latest
     build:
       context: .
       dockerfile: services/processing/Dockerfile
-    container_name: processing
+    container_name: surges-entry-processing
     ports:
       - "50051:50051"
     environment:
@@ -50,15 +51,15 @@ services:
       - event-net
 
   ingestion:
-    image: event-platform/ingestion:latest
+    image: surges-entry/ingestion:latest
     build:
       context: .
       dockerfile: services/ingestion/Dockerfile
-    container_name: ingestion
+    container_name: surges-entry-ingestion
     environment:
       KAFKA_BROKERS: "kafka:29092"
       KAFKA_TOPIC: "events"
-      KAFKA_CONSUMER_GROUP: "ingestion-service-group"
+      KAFKA_CONSUMER_GROUP: "surges-entry-ingestion-group"
       PROCESSING_ADDR: "processing:50051"
       HEALTH_PORT: "8080"
       OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger:4317"

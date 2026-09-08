@@ -1,5 +1,7 @@
-# EventFlow — Distributed Event Processing Platform
+# SurgesEntry — Distributed Event Processing Platform
+> *Production-hardened distributed event processing platform in Go with Kafka, gRPC, Redis, and Kubernetes.*
 
+[![GitHub Repository](https://img.shields.io/badge/GitHub-surges--entry-blue?style=flat&logo=github)](https://github.com/GurutejaReddy-04/surges-entry)
 [![Go Version](https://img.shields.io/badge/Go-1.22%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Kafka](https://img.shields.io/badge/Kafka-KRaft%207.7-231F20?style=flat&logo=apachekafka)](https://kafka.apache.org/)
 [![gRPC](https://img.shields.io/badge/gRPC-Protobuf-244c5a?style=flat&logo=grpc)](https://grpc.io/)
@@ -7,7 +9,7 @@
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28%2B-326CE5?style=flat&logo=kubernetes)](https://kubernetes.io/)
 [![Docker](https://img.shields.io/badge/Docker-Images%20%3C41MB-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 
-A production-hardened distributed event processing platform built in Go. Demonstrates end-to-end streaming ingestion, partition-affinity hot-state caching, two-tier anomaly detection, distributed tracing, and automated fault recovery.
+**SurgesEntry** is a production-hardened distributed event processing platform built in Go. Demonstrates end-to-end streaming ingestion, partition-affinity hot-state caching, two-tier anomaly detection, distributed tracing, and automated fault recovery.
 
 **Key Features:**
 - **3 Microservices**: Ingestion, Processing, and Notification decoupled via high-performance gRPC.
@@ -128,7 +130,8 @@ flowchart TD
 ### 1. Start Infrastructure & Microservices (Docker Compose)
 ```powershell
 # Clone and enter directory
-cd event-platform
+git clone https://github.com/GurutejaReddy-04/surges-entry.git
+cd surges-entry
 
 # Start external stores (Kafka, Redis, PostgreSQL, Jaeger)
 docker-compose up -d
@@ -251,7 +254,7 @@ func InitTelemetry(ctx context.Context, serviceName string, logger *slog.Logger)
 The `k8s/` directory contains standard declarative manifests for deploying the microservices into a Kubernetes cluster (Docker Desktop K8s, Minikube, or cloud).
 
 ### Manifest Structure
-- `k8s/namespace.yaml`: Creates dedicated `event-platform` namespace.
+- `k8s/namespace.yaml`: Creates dedicated `surges-entry` namespace.
 - `k8s/secret.yaml`: Secure `platform-secrets` Secret holding credentials (`POSTGRES_DSN`), decoupled from public configuration.
 - `k8s/configmap.yaml`: Centralized non-sensitive environment configuration.
 - `k8s/deployment-*.yaml`: Pod specs with resource requests/limits, hardened security contexts (`runAsNonRoot: true`, UID 10001, `readOnlyRootFilesystem: true`, `/tmp` `emptyDir`), and HTTP health probes.

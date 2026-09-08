@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	eventpb "event-platform/proto/gen/event"
+	eventpb "surges-entry/proto/gen/event"
 
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
