@@ -31,17 +31,17 @@ flowchart TD
     end
 
     %% Communications
-    SIM -->|Keyed Message Produce| KAFKA
-    KAFKA -->|Sequential Partition Stream| ING
-    ING -->|gRPC: ProcessEvent<br/>W3C traceparent| PROC
-    PROC -->|Atomic TxPipeline (single RTT)| REDIS
-    PROC -->|Audit Insert with Retry| POSTGRES
-    PROC -->|Async Bounded Dispatch| NOTIF
+    SIM -->|"Keyed Message Produce"| KAFKA
+    KAFKA -->|"Sequential Partition Stream"| ING
+    ING -->|"gRPC: ProcessEvent<br/>W3C traceparent"| PROC
+    PROC -->|"Atomic TxPipeline (single RTT)"| REDIS
+    PROC -->|"Audit Insert with Retry"| POSTGRES
+    PROC -->|"Async Bounded Dispatch"| NOTIF
 
     %% Telemetry
-    ING -.->|OTLP gRPC| JAEGER
-    PROC -.->|OTLP gRPC| JAEGER
-    NOTIF -.->|OTLP gRPC| JAEGER
+    ING -.->|"OTLP gRPC"| JAEGER
+    PROC -.->|"OTLP gRPC"| JAEGER
+    NOTIF -.->|"OTLP gRPC"| JAEGER
 ```
 
 ---

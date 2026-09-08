@@ -62,17 +62,17 @@ flowchart TD
     end
 
     %% Flow connections
-    SIM -->|Keyed Message Produce| KAFKA
-    KAFKA -->|Consume Partition Stream| ING
-    ING -->|gRPC: ProcessEvent<br/>W3C traceparent| PROC
-    PROC -->|Atomic Window Query| REDIS
-    PROC -->|Insert Audit Record| POSTGRES
-    PROC -->|gRPC: SendAlert<br/>(Anomalies only)| NOTIF
+    SIM -->|"Keyed Message Produce"| KAFKA
+    KAFKA -->|"Consume Partition Stream"| ING
+    ING -->|"gRPC: ProcessEvent<br/>W3C traceparent"| PROC
+    PROC -->|"Atomic Window Query"| REDIS
+    PROC -->|"Insert Audit Record"| POSTGRES
+    PROC -->|"gRPC: SendAlert<br/>(Anomalies only)"| NOTIF
 
     %% Telemetry spans
-    ING -.->|OTLP Traces| JAEGER
-    PROC -.->|OTLP Traces| JAEGER
-    NOTIF -.->|OTLP Traces| JAEGER
+    ING -.->|"OTLP Traces"| JAEGER
+    PROC -.->|"OTLP Traces"| JAEGER
+    NOTIF -.->|"OTLP Traces"| JAEGER
 
     classDef k8s fill:#326ce5,stroke:#fff,stroke-width:2px,color:#fff;
     classDef store fill:#336791,stroke:#fff,stroke-width:2px,color:#fff;
