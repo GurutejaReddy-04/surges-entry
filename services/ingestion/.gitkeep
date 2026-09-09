@@ -1,0 +1,2 @@
+# Ingestion Service
+# Kafka consumer -> schema validation -> gRPC client to Processing Service
