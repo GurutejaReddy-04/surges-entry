@@ -1,0 +1,2 @@
+# Processing Service
+# gRPC server -> Redis hot state -> two-tier anomaly detection -> PostgreSQL audit store
