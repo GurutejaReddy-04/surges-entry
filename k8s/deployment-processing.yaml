@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: surges-entry-processing
+  namespace: surges-entry
+  labels:
+    app: surges-entry-processing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: surges-entry-processing
+  template:
+    metadata:
+      labels:
+        app: surges-entry-processing
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: surges-entry-processing
+          image: surges-entry/processing:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: health
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: platform-config
+          env:
+            - name: GRPC_PORT
+              value: "50051"
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_DSN
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}

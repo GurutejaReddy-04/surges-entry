@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: surges-entry-ingestion
+  namespace: surges-entry
+  labels:
+    app: surges-entry-ingestion
+spec:
+  type: ClusterIP
+  selector:
+    app: surges-entry-ingestion
+  ports:
+    - name: health
+      port: 8080
+      targetPort: 8080
