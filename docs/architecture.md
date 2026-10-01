@@ -55,7 +55,7 @@ flowchart TD
 * **Key Design Decisions**:
   * **Partition Sequential Processing**: Reads events in strict partition sequence to maintain per-user FIFO ordering.
   * **Offset Advancement Defense**: Executes in-place exponential retries (up to 3 attempts) for transient errors. If an error is unrecoverable (e.g., PostgreSQL or Processing returns `codes.Unavailable`), it halts the partition claim immediately without marking the offset.
-  * **Poison Pill Drop-and-Log Boundary**: Discards malformed JSON and semantic argument errors (`codes.InvalidArgument`) cleanly (`return nil`) to prevent infinite partition stall loops while logging discard diagnostics.
+  * **Error Handling**: Drops malformed messages and logs the error to prevent stalling the Kafka consumer.
   * **Root Span Generation**: Initiates the root W3C trace span `ingestion.consume_event` with partition and offset attributes, injecting trace context into outgoing gRPC metadata via `otelgrpc`.
 
 ### 2.2 Processing Service (`services/processing/`)

@@ -42,9 +42,8 @@ func (s *RedisHotStateStore) Close() error {
 	return s.client.Close()
 }
 
-// ComputeAverage fetches the pre-existing rolling window from Redis and calculates
-// the baseline rolling average prior to database persistence and anomaly evaluation.
-// Returns nil on cold start (empty window) or when Redis degrades gracefully.
+// ComputeAverage calculates the rolling average from the Redis window.
+// Returns nil if the window is empty or Redis is unavailable.
 func (s *RedisHotStateStore) ComputeAverage(ctx context.Context, userID string, traceID string) *float64 {
 	key := fmt.Sprintf("window:%s", userID)
 

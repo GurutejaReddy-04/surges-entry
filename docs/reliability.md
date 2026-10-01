@@ -31,7 +31,7 @@ The SurgesEntry platform provides an **at-least-once processing contract for str
 ```
 
 ### The Poison-Pill & Malformed Payload Boundary
-In distributed stream processing, claiming universal "zero data loss" across all input conditions is technically ungrounded. In SurgesEntry, the ingestion layer enforces an explicit architectural boundary in [`services/ingestion/handler.go`](../services/ingestion/handler.go):
+The ingestion service drops invalid messages rather than retrying them indefinitely, which would block the queue (see [`services/ingestion/handler.go`](../services/ingestion/handler.go)):
 
 1. **Malformed JSON Payloads**: If a message cannot be parsed or validated against the protobuf schema (`ParseAndValidateEvent`), the consumer logs a structured warning and returns `nil`. This deliberately discards the malformed payload rather than stalling the partition consumer loop indefinitely.
 2. **Downstream Validation Rejections (`codes.InvalidArgument`)**: If downstream processing rejects an event as semantically unprocessable, retrying will never succeed. The handler treats this as a poison pill, logs an alert, and returns `nil` (`// Drop and continue`).

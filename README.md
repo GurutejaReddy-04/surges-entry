@@ -10,7 +10,7 @@
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28%2B-326CE5?style=flat&logo=kubernetes)](https://kubernetes.io/)
 [![Docker](https://img.shields.io/badge/Docker-Images%20%3C41MB-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 
-**SurgesEntry** is a distributed stream processing platform engineered in Go. It ingests high-throughput event streams, calculates per-user rolling window statistics in an in-memory cache, executes two-tier anomaly detection, persists immutable audit records to PostgreSQL, and correlates distributed traces end-to-end via OpenTelemetry.
+**SurgesEntry** is an event processing service written in Go. It reads events from Kafka, calculates rolling averages using Redis, flags anomalies, saves records to PostgreSQL, and uses OpenTelemetry for tracing.
 
 ---
 
@@ -58,10 +58,8 @@ flowchart TD
 ## 2. Key Engineering Highlights
 
 * **Partition Key Affinity**: Messages are keyed by `Hash(user_id)`, guaranteeing that all events for a specific user land on the same partition in strict FIFO order. This eliminates distributed locking across processing workers.
-* **Atomic Pre-Write Pipeline (Redis)**: Processing executes an atomic `rdb.TxPipeline()` (`MULTI/EXEC`) queuing `LRANGE` *before* `LPUSH`. This ensures anomaly detection baselines are computed strictly over historical events, eliminating outlier self-pollution within a single network round-trip (~0.8ms).
-* **Two-Tier Anomaly Engine with Graceful Degradation**:
-  * *Tier 1 (Dynamic)*: Evaluates event values against `1.5 × rolling_avg`.
-  * *Tier 2 (Static Fallback)*: If Redis is unavailable or on cold start, gracefully falls back to static thresholding (`value > 1000.0`) without interrupting the pipeline.
+* **Redis Transactions**: Uses Redis `TxPipeline` to avoid race conditions.
+* **Fallback Thresholds**: Uses a static threshold if Redis is down.
 * **At-Least-Once Delivery & Poison Pill Discard**: Offsets are committed only after successful PostgreSQL persistence. Downstream outages halt the partition claim without monotonic advancement. Unparseable JSON and semantic invalid arguments (`codes.InvalidArgument`) are deliberately dropped and logged (`return nil`) to preserve partition liveness.
 * **Distributed Observability**: Instrumentated with OpenTelemetry Go SDK and `otelgrpc`, generating 5-span flame graphs in Jaeger correlated by W3C `traceparent` headers and stored in PostgreSQL.
 
