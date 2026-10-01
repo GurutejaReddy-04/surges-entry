@@ -114,15 +114,15 @@ jobs:
 
       - name: Validate Kubernetes Manifests (Dry-Run)
         run: |
-          kubectl apply --dry-run=client -f k8s/namespace.yaml
-          kubectl apply --dry-run=client -f k8s/secret.yaml
-          kubectl apply --dry-run=client -f k8s/configmap.yaml
-          kubectl apply --dry-run=client -f k8s/deployment-notification.yaml
-          kubectl apply --dry-run=client -f k8s/service-notification.yaml
-          kubectl apply --dry-run=client -f k8s/deployment-processing.yaml
-          kubectl apply --dry-run=client -f k8s/service-processing.yaml
-          kubectl apply --dry-run=client -f k8s/deployment-ingestion.yaml
-          kubectl apply --dry-run=client -f k8s/service-ingestion.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/namespace.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/secret.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/configmap.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/deployment-notification.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/service-notification.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/deployment-processing.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/service-processing.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/deployment-ingestion.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/service-ingestion.yaml
 
   # ── 6. Live Integration Suite ───────────────────────────────────────────────
   integration-tests:

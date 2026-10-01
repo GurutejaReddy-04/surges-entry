@@ -5,8 +5,43 @@ import (
 	"testing"
 )
 
+func restoreEnv(key, val string, exists bool) {
+	if exists {
+		os.Setenv(key, val)
+	} else {
+		os.Unsetenv(key)
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
-	// Default config
+	// Preserve existing environment to avoid cross-test interference
+	origPort, hasPort := os.LookupEnv("GRPC_PORT")
+	origRedis, hasRedis := os.LookupEnv("REDIS_ADDR")
+	origDSN, hasDSN := os.LookupEnv("POSTGRES_DSN")
+	origFallback, hasFallback := os.LookupEnv("FALLBACK_THRESHOLD")
+	origDev, hasDev := os.LookupEnv("DEVIATION_MULTIPLIER")
+	origWin, hasWin := os.LookupEnv("REDIS_WINDOW_SIZE")
+	origNotif, hasNotif := os.LookupEnv("NOTIFICATION_GRPC_ADDR")
+
+	defer func() {
+		restoreEnv("GRPC_PORT", origPort, hasPort)
+		restoreEnv("REDIS_ADDR", origRedis, hasRedis)
+		restoreEnv("POSTGRES_DSN", origDSN, hasDSN)
+		restoreEnv("FALLBACK_THRESHOLD", origFallback, hasFallback)
+		restoreEnv("DEVIATION_MULTIPLIER", origDev, hasDev)
+		restoreEnv("REDIS_WINDOW_SIZE", origWin, hasWin)
+		restoreEnv("NOTIFICATION_GRPC_ADDR", origNotif, hasNotif)
+	}()
+
+	// Clear environment to test default fallback configuration
+	os.Unsetenv("GRPC_PORT")
+	os.Unsetenv("REDIS_ADDR")
+	os.Unsetenv("POSTGRES_DSN")
+	os.Unsetenv("FALLBACK_THRESHOLD")
+	os.Unsetenv("DEVIATION_MULTIPLIER")
+	os.Unsetenv("REDIS_WINDOW_SIZE")
+	os.Unsetenv("NOTIFICATION_GRPC_ADDR")
+
 	cfg := LoadConfig()
 	if cfg.GRPCPort != "50051" {
 		t.Errorf("expected default 50051, got %s", cfg.GRPCPort)
@@ -38,15 +73,6 @@ func TestLoadConfig(t *testing.T) {
 	os.Setenv("DEVIATION_MULTIPLIER", "2.0")
 	os.Setenv("REDIS_WINDOW_SIZE", "20")
 	os.Setenv("NOTIFICATION_GRPC_ADDR", "notif:50052")
-	defer func() {
-		os.Unsetenv("GRPC_PORT")
-		os.Unsetenv("REDIS_ADDR")
-		os.Unsetenv("POSTGRES_DSN")
-		os.Unsetenv("FALLBACK_THRESHOLD")
-		os.Unsetenv("DEVIATION_MULTIPLIER")
-		os.Unsetenv("REDIS_WINDOW_SIZE")
-		os.Unsetenv("NOTIFICATION_GRPC_ADDR")
-	}()
 
 	customCfg := LoadConfig()
 	if customCfg.GRPCPort != "60051" || customCfg.RedisAddr != "myredis:6379" || customCfg.FallbackThreshold != 500.5 || customCfg.DeviationMultiplier != 2.0 || customCfg.RedisWindowSize != 20 || customCfg.NotificationAddr != "notif:50052" {

@@ -54,7 +54,9 @@ func TestIntegration_RedisTxPipelineAndWindowEvolution(t *testing.T) {
 	key := fmt.Sprintf("window:%s", userID)
 	defer rdb.Del(ctx, key)
 
-	// Feed 3 values: 10, 20, 30 -> average should be 20.0
+	// Feed 3 values: 10, 20, 30.
+	// UpdateAndComputeAverage executes LRANGE before LPUSH (pre-write read) to prevent outlier self-pollution.
+	// Prior to appending 30, the historical window contains [10, 20], yielding (10 + 20) / 2 = 15.0.
 	vals := []float64{10.0, 20.0, 30.0}
 	var lastAvg *float64
 	for _, v := range vals {
@@ -64,8 +66,14 @@ func TestIntegration_RedisTxPipelineAndWindowEvolution(t *testing.T) {
 	if lastAvg == nil {
 		t.Fatalf("expected non-nil rolling average")
 	}
-	if *lastAvg != 20.0 {
-		t.Errorf("expected rolling average 20.0, got %f", *lastAvg)
+	if *lastAvg != 15.0 {
+		t.Errorf("expected pre-write rolling average 15.0, got %f", *lastAvg)
+	}
+
+	// Verify post-commit rolling average across all 3 items (10, 20, 30) is 20.0
+	committedAvg := hotState.ComputeAverage(ctx, userID, "trace-window-verify")
+	if committedAvg == nil || *committedAvg != 20.0 {
+		t.Errorf("expected committed rolling average 20.0, got %v", committedAvg)
 	}
 
 	// Verify TTL was set on the key
