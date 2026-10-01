@@ -72,7 +72,7 @@ containers:
 ## 3. Historical Credential Audit & Git History Classification
 
 ### 3.1 Audit Findings
-During security review of the repository, the static development credentials (`eventplatform:eventplatform`) were identified in:
+During security review of the repository, historical disposable development credentials were present in earlier revisions:
 * Git commits `799e3c8` and `454ba20` touching `k8s/secret.yaml` and `docker-compose.yml`.
 
 ### 3.2 Classification & Threat Assessment
