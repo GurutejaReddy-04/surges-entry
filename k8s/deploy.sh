@@ -27,7 +27,20 @@ fi
 
 echo "Applying Kubernetes manifests..."
 kubectl apply -f namespace.yaml
-kubectl apply -f secret.yaml
+
+if [ -f "secret.yaml" ]; then
+    echo "Applying secret from secret.yaml..."
+    kubectl apply -f secret.yaml
+elif kubectl -n surges-entry get secret platform-secrets &> /dev/null; then
+    echo "Reusing existing 'platform-secrets' Secret in surges-entry namespace."
+else
+    echo "Error: Secret 'platform-secrets' not found in namespace 'surges-entry' and 'k8s/secret.yaml' does not exist." >&2
+    echo "To configure:" >&2
+    echo "  1. Copy k8s/secret.example.yaml to k8s/secret.yaml and supply your credentials, OR" >&2
+    echo "  2. Provision externally: kubectl -n surges-entry create secret generic platform-secrets --from-literal=POSTGRES_DSN=\"...\"" >&2
+    exit 1
+fi
+
 kubectl apply -f configmap.yaml
 kubectl apply -f deployment-notification.yaml
 kubectl apply -f service-notification.yaml

@@ -1,12 +1,27 @@
 # SurgesEntry — Consumer Kill & Replay Resilience Demo
-# Proves Kafka's durable partition log and Kubernetes self-healing.
-# We kill the Ingestion Service pod mid-stream and prove zero data loss.
+# Proves Kafka's durable partition log and consumer offset resumption.
+# We kill the Ingestion Service pod mid-stream and verify crash recovery.
 
 param(
-    [string]$PostgresUser = "eventplatform",
-    [string]$PostgresDb = "eventplatform",
+    [string]$PostgresUser = "",
+    [string]$PostgresDb = "",
     [string]$Namespace = "surges-entry"
 )
+
+# Load .env if present
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$envFile = Join-Path (Split-Path -Parent $scriptDir) ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | Where-Object { $_ -match '^\s*([^#=\s]+)\s*=\s*(.*)$' } | ForEach-Object {
+        $k = $matches[1].Trim()
+        $v = $matches[2].Trim()
+        if (-not [Environment]::GetEnvironmentVariable($k)) {
+            [Environment]::SetEnvironmentVariable($k, $v)
+        }
+    }
+}
+if (-not $PostgresUser) { $PostgresUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { "eventplatform" } }
+if (-not $PostgresDb) { $PostgresDb = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "eventplatform" } }
 
 $ErrorActionPreference = "Continue"
 
@@ -50,7 +65,7 @@ Write-Host "============================================================" -Foreg
 Write-Host "  🚀 SurgesEntry: Consumer Kill & Replay Resilience Demo   " -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Yellow
 
-# Validates fault-tolerance and zero data loss under abrupt consumer termination.
+# Validates fault-tolerance and consumer recovery under abrupt process termination.
 Log-Step "1/6" "Checking infrastructure and Ingestion deployment..."
 
 $kafkaCheck = docker exec kafka kafka-topics --bootstrap-server kafka:29092 --list 2>$null
@@ -173,7 +188,7 @@ Write-Host "  Events recovered from outage : $part2Count / 5" -ForegroundColor W
 Write-Host "  Missing events               : $(15 - $totalCount)" -ForegroundColor White
 
 if ($totalCount -eq 15) {
-    Log-Pass "ZERO DATA LOSS CONFIRMED! Kafka offset resumption and Kubernetes self-healing verified."
+    Log-Pass "VERIFIED ZERO EVENT LOSS UNDER CONSUMER CRASH! 15/15 events recovered via Kafka offset resumption."
     exit 0
 } else {
     Log-Fail "Data loss detected: Expected 15 events, but only $totalCount arrived in PostgreSQL."

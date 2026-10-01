@@ -1,0 +1,210 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  # ── 1. Unit Tests ───────────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests & Race Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run Unit Tests
+        run: |
+          go test -v -race ./services/ingestion/... ./services/processing/... ./services/notification/... ./simulator/...
+
+  # ── 2. Code Linting ─────────────────────────────────────────────────────────
+  lint:
+    name: Code Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run Go Vet
+        run: |
+          go vet ./services/ingestion/... ./services/processing/... ./services/notification/... ./simulator/...
+
+  # ── 3. Binary Compilation ───────────────────────────────────────────────────
+  build-binaries:
+    name: Compile Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build All Go Modules
+        run: |
+          go build ./services/ingestion/... ./services/processing/... ./services/notification/... ./simulator/...
+
+  # ── 4. Container Builds ─────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Container Builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Ingestion Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/ingestion/Dockerfile
+          push: false
+          tags: surges-entry/ingestion:ci
+
+      - name: Build Processing Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/processing/Dockerfile
+          push: false
+          tags: surges-entry/processing:ci
+
+      - name: Build Notification Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/notification/Dockerfile
+          push: false
+          tags: surges-entry/notification:ci
+
+  # ── 5. Kubernetes Manifest Validation ───────────────────────────────────────
+  k8s-validate:
+    name: Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Prepare Secret from Example Template
+        run: |
+          cp k8s/secret.example.yaml k8s/secret.yaml
+          sed -i 's/<DB_USER>/eventplatform/g' k8s/secret.yaml
+          sed -i 's/<DB_PASSWORD>/eventplatform/g' k8s/secret.yaml
+          sed -i 's/<DB_HOST>/host.docker.internal/g' k8s/secret.yaml
+          sed -i 's/<DB_NAME>/eventplatform/g' k8s/secret.yaml
+
+      - name: Validate Kubernetes Manifests (Dry-Run)
+        run: |
+          kubectl apply --dry-run=client -f k8s/namespace.yaml
+          kubectl apply --dry-run=client -f k8s/secret.yaml
+          kubectl apply --dry-run=client -f k8s/configmap.yaml
+          kubectl apply --dry-run=client -f k8s/deployment-notification.yaml
+          kubectl apply --dry-run=client -f k8s/service-notification.yaml
+          kubectl apply --dry-run=client -f k8s/deployment-processing.yaml
+          kubectl apply --dry-run=client -f k8s/service-processing.yaml
+          kubectl apply --dry-run=client -f k8s/deployment-ingestion.yaml
+          kubectl apply --dry-run=client -f k8s/service-ingestion.yaml
+
+  # ── 6. Live Integration Suite ───────────────────────────────────────────────
+  integration-tests:
+    name: Live Integration Suite (Kafka, Redis, Postgres)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: eventplatform
+          POSTGRES_PASSWORD: eventplatform_ci_password
+          POSTGRES_DB: eventplatform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eventplatform -d eventplatform"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Start Kafka KRaft Broker
+        run: |
+          docker run -d \
+            --name kafka-ci \
+            -p 9092:9092 \
+            -e KAFKA_NODE_ID=1 \
+            -e KAFKA_PROCESS_ROLES=broker,controller \
+            -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:29093 \
+            -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+            -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+            -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+            -e KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT \
+            -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+            -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+            -e KAFKA_AUTO_CREATE_TOPICS_ENABLE=true \
+            -e KAFKA_NUM_PARTITIONS=6 \
+            -e CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk \
+            confluentinc/cp-kafka:7.7.0
+
+          # Wait for Kafka to become responsive
+          echo "Waiting for Kafka broker readiness..."
+          for i in {1..30}; do
+            if docker exec kafka-ci kafka-topics --bootstrap-server localhost:9092 --list > /dev/null 2>&1; then
+              echo "Kafka is healthy!"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Initialize PostgreSQL Schema
+        env:
+          PGPASSWORD: eventplatform_ci_password
+        run: |
+          psql -h localhost -U eventplatform -d eventplatform -f sql/schema.sql
+
+      - name: Run Integration Tests
+        env:
+          KAFKA_BROKER: localhost:9092
+          REDIS_ADDR: localhost:6379
+          POSTGRES_DSN: postgres://eventplatform:eventplatform_ci_password@localhost:5432/eventplatform?sslmode=disable
+        run: |
+          echo "Executing live integration tests against Kafka, Redis, and PostgreSQL..."
+          go test -v -tags=integration ./services/ingestion/... ./services/processing/...

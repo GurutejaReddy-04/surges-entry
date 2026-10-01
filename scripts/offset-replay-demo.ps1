@@ -3,10 +3,25 @@
 
 param(
     [string]$ConsumerGroup = "surges-entry-ingestion-group",
-    [string]$PostgresUser = "eventplatform",
-    [string]$PostgresDb = "eventplatform",
+    [string]$PostgresUser = "",
+    [string]$PostgresDb = "",
     [string]$Namespace = "surges-entry"
 )
+
+# Load .env if present
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$envFile = Join-Path (Split-Path -Parent $scriptDir) ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | Where-Object { $_ -match '^\s*([^#=\s]+)\s*=\s*(.*)$' } | ForEach-Object {
+        $k = $matches[1].Trim()
+        $v = $matches[2].Trim()
+        if (-not [Environment]::GetEnvironmentVariable($k)) {
+            [Environment]::SetEnvironmentVariable($k, $v)
+        }
+    }
+}
+if (-not $PostgresUser) { $PostgresUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { "eventplatform" } }
+if (-not $PostgresDb) { $PostgresDb = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "eventplatform" } }
 
 $ErrorActionPreference = "Continue"
 

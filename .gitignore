@@ -40,3 +40,10 @@ internal/
 coverage.*
 cov
 coverage
+
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+k8s/secret.yaml
+.gotmp/

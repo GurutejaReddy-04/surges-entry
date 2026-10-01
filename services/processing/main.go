@@ -95,6 +95,10 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	defer hotState.Close()
 
 	// Initialize PostgreSQL repository
+	if cfg.PostgresDSN == "" {
+		return fmt.Errorf("POSTGRES_DSN environment variable is required")
+	}
+
 	initCtx, initCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer initCancel()
 	repo, err := NewPostgresEventRepository(initCtx, cfg.PostgresDSN, logger)

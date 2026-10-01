@@ -3,6 +3,20 @@
 $ErrorActionPreference = "Continue"
 $failed = 0
 
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$envFile = Join-Path (Split-Path -Parent $scriptDir) ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | Where-Object { $_ -match '^\s*([^#=\s]+)\s*=\s*(.*)$' } | ForEach-Object {
+        $k = $matches[1].Trim()
+        $v = $matches[2].Trim()
+        if (-not [Environment]::GetEnvironmentVariable($k)) {
+            [Environment]::SetEnvironmentVariable($k, $v)
+        }
+    }
+}
+$pgUser = if ($env:POSTGRES_USER) { $env:POSTGRES_USER } else { "eventplatform" }
+$pgDb = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "eventplatform" }
+
 function Step([string]$n, [string]$label) {
     Write-Host "`n--- [$n] $label ---" -ForegroundColor Cyan
 }
@@ -72,7 +86,7 @@ try {
 # 4. PostgreSQL Trace ID persistence
 Step "4/5" "Verify trace_id persistence in PostgreSQL"
 if ($sampledTraceId) {
-    $pgResult = docker exec postgres psql -U eventplatform -d eventplatform -t -A -c "SELECT user_id, event_type, event_value, rolling_avg, is_anomaly FROM processed_events WHERE trace_id = '$sampledTraceId';" 2>$null
+    $pgResult = docker exec postgres psql -U $pgUser -d $pgDb -t -A -c "SELECT user_id, event_type, event_value, rolling_avg, is_anomaly FROM processed_events WHERE trace_id = '$sampledTraceId';" 2>$null
     if ($pgResult) {
         Pass "Database row found with trace_id $sampledTraceId"
         Write-Host "    DB Record: $pgResult" -ForegroundColor Gray

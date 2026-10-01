@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # SurgesEntry — Consumer Kill & Replay Resilience Demo
-# Proves Kafka's durable partition log and Kubernetes self-healing.
-# We kill the Ingestion Service pod mid-stream and prove zero data loss.
+# Proves Kafka's durable partition log and consumer offset resumption.
+# We kill the Ingestion Service pod mid-stream and verify crash recovery.
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/../.env"
+if [ -f "$ENV_FILE" ]; then
+    # Export non-comment lines
+    set -a
+    source "$ENV_FILE" 2>/dev/null || true
+    set +a
+fi
+
 NAMESPACE="${NAMESPACE:-surges-entry}"
-POSTGRES_USER="eventplatform"
-POSTGRES_DB="eventplatform"
+POSTGRES_USER="${POSTGRES_USER:-eventplatform}"
+POSTGRES_DB="${POSTGRES_DB:-eventplatform}"
 
 log_step() {
     echo -e "\n\033[1;36m[$(date '+%Y-%m-%d %H:%M:%S')] [$1] $2\033[0m"
@@ -48,7 +57,7 @@ echo -e "\033[1;33m============================================================\
 echo -e "\033[1;33m  🚀 SurgesEntry: Consumer Kill & Replay Resilience Demo    \033[0m"
 echo -e "\033[1;33m============================================================\033[0m"
 
-# Validates fault-tolerance and zero data loss under abrupt consumer termination.
+# Validates fault-tolerance and consumer recovery under abrupt process termination.
 
 RUN_ID="killdemo-$(date +%s%N)"
 USER="resilience-user-${RUN_ID}"
@@ -150,9 +159,9 @@ echo "  Events recovered from outage : ${part2_count} / 5"
 echo "  Missing events               : $((15 - total_count))"
 
 if [ "$total_count" -ge 15 ] && [ "$part2_count" -ge 5 ]; then
-    echo -e "\n\033[1;32m🚀 PASS: ZERO DATA LOSS CONFIRMED! Kafka offset resumption and Kubernetes self-healing verified.\033[0m\n"
+    echo -e "\n\033[1;32m🚀 PASS: VERIFIED ZERO EVENT LOSS UNDER CONSUMER CRASH! 15/15 events recovered via Kafka offset resumption.\033[0m\n"
     exit 0
 else
-    echo -e "\n\033[1;31m💀 FAIL: Data loss detected! Expected 15 events, recovered ${total_count}.\033[0m\n"
+    echo -e "\n\033[1;31m💀 FAIL: Event loss detected! Expected 15 events, recovered ${total_count}.\033[0m\n"
     exit 1
 fi

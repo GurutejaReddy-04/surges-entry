@@ -46,15 +46,15 @@ services:
     image: postgres:16-alpine
     container_name: postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     environment:
-      POSTGRES_USER: eventplatform
-      POSTGRES_PASSWORD: eventplatform
-      POSTGRES_DB: eventplatform
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required. Copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:-eventplatform}
     volumes:
       - ./sql/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U eventplatform -d eventplatform"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-eventplatform} -d ${POSTGRES_DB:-eventplatform}"]
       interval: 5s
       timeout: 3s
       retries: 5

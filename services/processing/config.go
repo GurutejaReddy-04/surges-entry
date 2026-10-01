@@ -50,7 +50,7 @@ func LoadConfig() Config {
 	return Config{
 		GRPCPort:            getEnv("GRPC_PORT", "50051"),
 		RedisAddr:           getEnv("REDIS_ADDR", "localhost:6379"),
-		PostgresDSN:         getEnv("POSTGRES_DSN", "postgres://eventplatform:eventplatform@localhost:5432/eventplatform?sslmode=disable"),
+		PostgresDSN:         getEnv("POSTGRES_DSN", ""),
 		FallbackThreshold:   getEnvFloat("FALLBACK_THRESHOLD", 1000.0),
 		DeviationMultiplier: getEnvFloat("DEVIATION_MULTIPLIER", 1.5),
 		RedisWindowSize:     getEnvInt("REDIS_WINDOW_SIZE", 10),

@@ -98,3 +98,14 @@ func TestRun_InvalidPostgresDSN(t *testing.T) {
 		t.Error("expected error from run with invalid postgres dsn, got nil")
 	}
 }
+
+func TestRun_EmptyPostgresDSN(t *testing.T) {
+	cfg := Config{
+		PostgresDSN: "",
+	}
+	err := run(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil {
+		t.Error("expected error from run with empty postgres dsn, got nil")
+	}
+}
+

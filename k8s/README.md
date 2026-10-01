@@ -33,7 +33,7 @@ Host (Docker Compose)                   Kubernetes Cluster (surges-entry namespa
 |---|---|---|
 | `namespace.yaml` | Namespace | Creates `surges-entry` namespace |
 | `configmap.yaml` | ConfigMap | Environment variables for Kafka, Redis, Postgres, and service URLs |
-| `secret.yaml` | Secret | Base64/plain credentials for PostgreSQL |
+| `secret.example.yaml` | Secret Template | Placeholder template for PostgreSQL credentials (copy to untracked `secret.yaml` or inject externally) |
 | `deployment-notification.yaml` | Deployment | Runs `surges-entry-notification` with readiness/liveness probes |
 | `service-notification.yaml` | Service | ClusterIP exposing `:50052` (gRPC) and `:8080` (health) |
 | `deployment-processing.yaml` | Deployment | Runs `surges-entry-processing` (1–3 replicas) |
@@ -58,14 +58,22 @@ Each service implements `grpc.health.v1` and exposes an internal `/healthz` HTTP
 docker-compose up -d
 ```
 
-### 2. Enable Kubernetes
+### 2. Configure Kubernetes Secrets
+```powershell
+# Copy the example secret template to local untracked secret.yaml
+Copy-Item secret.example.yaml secret.yaml   # On Linux: cp secret.example.yaml secret.yaml
+
+# Edit secret.yaml with your database credentials (or provide via External Secrets Operator / Vault)
+```
+
+### 3. Enable Kubernetes
 - **Option A (Docker Desktop)**: Settings -> Kubernetes -> Check **Enable Kubernetes** -> Apply & restart.
 - **Option B (Minikube)**:
   ```powershell
   minikube start --driver=docker
   ```
 
-### 3. Deploy
+### 4. Deploy
 ```powershell
 cd k8s
 ./deploy.ps1  # or ./deploy.sh

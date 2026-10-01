@@ -4,10 +4,18 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/../.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    source "$ENV_FILE" 2>/dev/null || true
+    set +a
+fi
+
 NAMESPACE="${NAMESPACE:-surges-entry}"
 CONSUMER_GROUP="surges-entry-ingestion-group"
-POSTGRES_USER="eventplatform"
-POSTGRES_DB="eventplatform"
+POSTGRES_USER="${POSTGRES_USER:-eventplatform}"
+POSTGRES_DB="${POSTGRES_DB:-eventplatform}"
 
 log_step() {
     echo -e "\n\033[1;36m[$(date '+%Y-%m-%d %H:%M:%S')] [$1] $2\033[0m"

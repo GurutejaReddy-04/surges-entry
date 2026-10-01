@@ -31,7 +31,7 @@ services:
       GRPC_PORT: "50051"
       HEALTH_PORT: "8080"
       REDIS_ADDR: "redis:6379"
-      POSTGRES_DSN: "postgres://eventplatform:eventplatform@postgres:5432/eventplatform?sslmode=disable"
+      POSTGRES_DSN: "postgres://${POSTGRES_USER:-eventplatform}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env}@postgres:5432/${POSTGRES_DB:-eventplatform}?sslmode=disable"
       NOTIFICATION_GRPC_ADDR: "notification:50052"
       FALLBACK_THRESHOLD: "1000.0"
       DEVIATION_MULTIPLIER: "1.5"

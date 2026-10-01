@@ -1,9 +1,11 @@
 # SurgesEntry — Architecture Overview
 > *Distributed Event Processing Platform*
 
+---
+
 ## 1. System Overview
 
-**SurgesEntry** is a production-grade, distributed stream processing platform engineered in Go. It ingests high-throughput telemetry events, computes per-user real-time sliding window statistics in an in-memory cache, executes two-tier anomaly detection, writes immutable audit trails to persistent storage, and propagates distributed traces end-to-end across a gRPC microservice mesh.
+**SurgesEntry** is a production-hardened, distributed stream processing platform engineered in Go. It ingests high-throughput telemetry events, computes per-user real-time sliding window statistics in an in-memory cache, executes two-tier anomaly detection, writes immutable audit trails to persistent storage, and propagates distributed traces end-to-end across a gRPC microservice mesh.
 
 ```mermaid
 flowchart TD
@@ -51,8 +53,9 @@ flowchart TD
 ### 2.1 Ingestion Service (`services/ingestion/`)
 * **Role**: Ingests raw JSON payloads from Kafka topic partitions.
 * **Key Design Decisions**:
-  * **Partition Sequential Processing**: Reads events in strict partition sequence to maintain strict FIFO per-user ordering.
-  * **Offset Advancement Defense**: Executes in-place exponential retries (up to 3 attempts) for transient errors. If an error is unrecoverable (e.g., PostgreSQL or Processing downstream returns `codes.Unavailable`), it halts the partition claim immediately without marking the offset. This guarantees zero message loss and prevents Kafka's monotonic offset advancement bug.
+  * **Partition Sequential Processing**: Reads events in strict partition sequence to maintain per-user FIFO ordering.
+  * **Offset Advancement Defense**: Executes in-place exponential retries (up to 3 attempts) for transient errors. If an error is unrecoverable (e.g., PostgreSQL or Processing returns `codes.Unavailable`), it halts the partition claim immediately without marking the offset.
+  * **Poison Pill Quarantine**: Discards malformed JSON and semantic argument errors (`codes.InvalidArgument`) cleanly (`return nil`) to prevent infinite partition stall loops while logging quarantine diagnostics.
   * **Root Span Generation**: Initiates the root W3C trace span `ingestion.consume_event` with partition and offset attributes, injecting trace context into outgoing gRPC metadata via `otelgrpc`.
 
 ### 2.2 Processing Service (`services/processing/`)
@@ -73,19 +76,81 @@ flowchart TD
 
 ---
 
-## 3. Resilience & Fault-Tolerance Guarantees
+## 3. Deployment Topologies: Local Hybrid vs. Reference Production Architecture
 
-| Failure Scenario | Mitigation Strategy | Result |
-| :--- | :--- | :--- |
-| **Ingestion Pod Crash** | Kafka maintains partition high-water mark; Kubernetes restarts pod | Pod resumes consumption from last committed offset. **Zero data loss**. |
-| **Downstream Outage (Postgres / Processing)** | Ingestion stops marking offsets and halts partition consumption | Offsets remain intact; stream pauses until downstream self-heals. |
-| **Redis Cache Outage** | Isolated error boundary in Processing; falls back to Tier-2 static threshold | Processing continues seamlessly; audit logs preserved; zero pipeline halts. |
-| **Notification RPC Lag** | Asynchronous bounded worker channel (`alertQueue`) drops excess non-blocking warnings | Core event processing latency is completely isolated from alert delivery delays. |
-| **Poison Pill / Malformed JSON** | Parser validates schemas; poison pill logs quarantine reason and drops cleanly | Prevents infinite crash-loops while preserving partition progress for healthy events. |
+To clearly distinguish between the local demonstration environment and cloud deployments, SurgesEntry delineates its topologies as follows:
+
+```mermaid
+flowchart TD
+    subgraph LocalDemo ["1. Implemented: Local Hybrid Topology (Development / Demo)"]
+        K8S_LOCAL["Kubernetes (Minikube / Docker Desktop)<br/>Ingestion, Processing, Notification"]
+        HOST_INFRA["Host Docker Compose<br/>Kafka KRaft, Redis, Postgres, Jaeger"]
+        K8S_LOCAL -->|"host.docker.internal (Bridge)"| HOST_INFRA
+    end
+
+    subgraph ProductionK8s ["2. Reference: Cloud Kubernetes Cluster (EKS / GKE / AKS)"]
+        ING_PODS["Ingestion Pods<br/>(KEDA scaled by Kafka consumer lag)"]
+        PROC_PODS["Processing Pods<br/>(HPA scaled by CPU/Memory)"]
+        NOTIF_PODS["Notification Pods"]
+        ESO["External Secrets Operator / Vault"]
+        ING_PODS -->|"ClusterIP / gRPC (mTLS)"| PROC_PODS
+        PROC_PODS -->|"ClusterIP / gRPC (mTLS)"| NOTIF_PODS
+        ESO -.->|"Injects Kubernetes Secrets"| PROC_PODS
+    end
+
+    subgraph ManagedCloud ["3. Reference: Managed Cloud Infrastructure (External VPC)"]
+        MSK["Managed Kafka (AWS MSK / Confluent Cloud)<br/>Multi-AZ, TLS 1.3, SASL/SCRAM or IAM"]
+        ELASTICACHE["Redis (Amazon ElastiCache / Redis Enterprise)<br/>Multi-AZ, Auth Token, Auto-failover"]
+        RDS["PostgreSQL (Amazon RDS Aurora Multi-AZ)<br/>IAM Auth, KMS Encryption, Read Replicas"]
+        TEMPO["Managed Tracing (Grafana Tempo / Datadog)"]
+    end
+
+    ProductionK8s -->|"VPC Peering / PrivateLink (Encrypted Private Transit)"| ManagedCloud
+```
+
+### 3.1 Implemented: Local Hybrid Topology
+* **Purpose**: Allows complete local demonstration on developer workstations without running resource-heavy StatefulSets or PersistentVolumes inside Minikube.
+* **Mechanism**: Microservices run in Kubernetes (`surges-entry` namespace) or Docker Compose, while stateful datastores run in host Docker Compose.
+* **Networking**: Containers reach host ports via `host.docker.internal` (Docker Desktop) or bridge IP (Minikube).
+
+### 3.2 Reference: Production Cloud Architecture
+In a production deployment, the architecture transitions to a cloud-native model with the following modifications:
+1. **Networking**:
+   - `host.docker.internal` is completely removed.
+   - Microservices communicate across private subnets via VPC Peering, AWS PrivateLink, or Azure Private Endpoints.
+   - In-cluster service communication uses Kubernetes `ClusterIP` and Headless Services with mutual TLS (mTLS).
+2. **Security & Secrets**:
+   - Connection strings are not stored in plaintext manifests.
+   - Kubernetes Secrets are injected dynamically using **External Secrets Operator (ESO)** backed by AWS Secrets Manager or HashiCorp Vault.
+   - Database authentication leverages IAM database authentication (e.g., AWS RDS IAM auth) with short-lived tokens.
+   - Kafka authentication uses SASL/SCRAM-SHA-512 or AWS IAM.
+3. **High Availability & Fault Domains**:
+   - Managed Kafka deployed across 3 Availability Zones with minimum in-sync replicas ($RF \ge 3, ISR \ge 2$).
+   - Managed Redis deployed with Multi-AZ replication and automated cluster failover.
+   - Managed PostgreSQL deployed in active-standby Multi-AZ with automated storage autoscaling.
+4. **Autoscaling**:
+   - Ingestion pods scale automatically via **KEDA** (Kubernetes Event-driven Autoscaling) monitoring Kafka partition consumer lag.
+   - Processing pods scale via Kubernetes HPA driven by CPU and custom request latency metrics.
 
 ---
 
-## 4. Distributed Tracing Flow
+## 4. Resilience & Fault-Tolerance Contract
+
+SurgesEntry provides an **at-least-once delivery contract for valid messages**, intentionally isolating or discarding unrecoverable payloads:
+
+| Failure Scenario | Mitigation Strategy | Observed / Architectural Result |
+| :--- | :--- | :--- |
+| **Ingestion Pod Crash** | Kafka retains partition high-water mark; Kubernetes restarts pod | Pod resumes consumption from last committed offset under at-least-once semantics. |
+| **Downstream Outage (Postgres / Processing)** | Ingestion halts partition consumption without marking offset | Offsets remain intact; stream pauses safely until downstream self-heals. |
+| **Redis Cache Outage** | Isolated error boundary in Processing; falls back to Tier-2 static threshold | Processing continues seamlessly; audit logs preserved; zero pipeline interruption. |
+| **Notification RPC Lag** | Asynchronous bounded worker channel (`alertQueue`, buffer 1000) | Core event processing latency is completely isolated from alert delivery delays. |
+| **Poison Pill / Malformed JSON** | Parser validates schemas; poison pill logs quarantine reason and drops cleanly | Message discarded (`return nil`) to prevent infinite partition consumer stalls. |
+
+*(For detailed experimental conditions, see [docs/reliability.md](reliability.md).)*
+
+---
+
+## 5. Distributed Tracing Flow
 
 Each event generates a unified 5-span flame graph linked by W3C `traceparent` metadata:
 1. `ingestion.consume_event` (Ingestion internal span)

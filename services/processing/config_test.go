@@ -26,6 +26,9 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.NotificationAddr != "localhost:50052" {
 		t.Errorf("expected localhost:50052, got %s", cfg.NotificationAddr)
 	}
+	if cfg.PostgresDSN != "" {
+		t.Errorf("expected empty default PostgresDSN, got %s", cfg.PostgresDSN)
+	}
 
 	// Custom environment variables
 	os.Setenv("GRPC_PORT", "60051")
