@@ -63,8 +63,8 @@ flowchart TD
 * **Key Design Decisions**:
   * **Decoupled Pre-Write Window Read**: Uses Redis `TxPipeline` to issue `LRANGE` before `LPUSH`, computing baseline statistics strictly from historical events so incoming spikes do not contaminate their own detection baseline.
   * **Two-Tier Anomaly Engine**:
-    * **Tier 1 (Dynamic)**: Evaluates $value > 1.5 \times \text{rolling\_avg}$.
-    * **Tier 2 (Static Fallback)**: If Redis is unavailable or on cold-start (empty window), falls back to $value > 1000.0$.
+    * **Tier 1 (Dynamic)**: Evaluates `value > 1.5 × rolling_avg`.
+    * **Tier 2 (Static Fallback)**: If Redis is unavailable or on cold-start (empty window), falls back to `value > 1000.0`.
   * **PostgreSQL Audit Store**: Persists records with computed rolling averages, anomaly flags, and 32-hex `trace_id`.
   * **Decoupled Alert Dispatch**: Routes anomaly alerts through a bounded in-memory worker queue (buffer size 1000, 2 concurrent workers) so slow notification RPCs never block the core processing path.
 
@@ -125,7 +125,7 @@ In a production deployment, the architecture transitions to a cloud-native model
    - Database authentication leverages IAM database authentication (e.g., AWS RDS IAM auth) with short-lived tokens.
    - Kafka authentication uses SASL/SCRAM-SHA-512 or AWS IAM.
 3. **High Availability & Fault Domains**:
-   - Managed Kafka deployed across 3 Availability Zones with minimum in-sync replicas ($RF \ge 3, ISR \ge 2$).
+   - Managed Kafka deployed across 3 Availability Zones with minimum in-sync replicas (`RF ≥ 3`, `ISR ≥ 2`).
    - Managed Redis deployed with Multi-AZ replication and automated cluster failover.
    - Managed PostgreSQL deployed in active-standby Multi-AZ with automated storage autoscaling.
 4. **Autoscaling**:

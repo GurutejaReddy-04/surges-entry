@@ -38,7 +38,7 @@ SurgesEntry is engineered for low-latency streaming ingestion and real-time stat
 Calculating per-user rolling averages at scale requires low network overhead and strong concurrency isolation. SurgesEntry implements this in [`services/processing/hotstate.go`](../services/processing/hotstate.go) using Redis transaction pipelining (`MULTI/EXEC`).
 
 ### 2.1 The Outlier Self-Pollution Problem
-If a naive implementation pushes the incoming value to the user's history list *before* calculating the average, a massive anomalous spike (e.g., $10\times$ normal) pollutes its own baseline. This artifically elevates the rolling average, potentially masking subsequent anomalies.
+If a naive implementation pushes the incoming value to the user's history list *before* calculating the average, a massive anomalous spike (e.g., 10× normal) pollutes its own baseline. This artificially elevates the rolling average, potentially masking subsequent anomalies.
 
 ### 2.2 The Atomic Pipeline Solution
 SurgesEntry queues `LRANGE` **before** `LPUSH` within a single Redis atomic transaction:
@@ -54,7 +54,7 @@ _, err := pipe.Exec(ctx)
 
 **Benefits**:
 1. **Uncontaminated Baseline**: The statistical baseline is computed strictly over the pre-existing history prior to the new event arriving.
-2. **Single Network Round-Trip**: Combines 4 discrete commands into a single round-trip, reducing cache operation latency from $\approx 3.2\text{ ms}$ to $\approx 0.8\text{ ms}$.
+2. **Single Network Round-Trip**: Combines 4 discrete commands into a single round-trip, reducing cache operation latency from ~3.2 ms to ~0.8 ms.
 3. **Atomic Multi-Replica Safety**: Redis single-threaded execution guarantees that concurrent replicas cannot interleave commands for the same user key.
 
 ---

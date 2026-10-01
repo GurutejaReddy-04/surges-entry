@@ -68,7 +68,7 @@ func loadConfig() Config {
 ### Workload Profile for Benchmarking
 * **Event Rate Override**: `EVENT_RATE=200` (target 200 events/second).
 * **User Pool Override**: `NUM_USERS=50` (ensuring events distribute evenly across all 6 Kafka partitions via hash keying).
-* **Value Distribution**: Normal distribution $\mathcal{N}(100, 20)$ with ~5% synthetic outliers ($value \in [200.0, 500.0]$) to exercise the anomaly detection branch.
+* **Value Distribution**: Normal distribution N(100, 20) with ~5% synthetic outliers (`value ∈ [200.0, 500.0]`) to exercise the anomaly detection branch.
 * **Event Types**: Uniform random selection from 5 types: `transaction`, `login`, `page_view`, `purchase`, `api_call`.
 
 ---

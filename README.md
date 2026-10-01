@@ -60,7 +60,7 @@ flowchart TD
 * **Partition Key Affinity**: Messages are keyed by `Hash(user_id)`, guaranteeing that all events for a specific user land on the same partition in strict FIFO order. This eliminates distributed locking across processing workers.
 * **Atomic Pre-Write Pipeline (Redis)**: Processing executes an atomic `rdb.TxPipeline()` (`MULTI/EXEC`) queuing `LRANGE` *before* `LPUSH`. This ensures anomaly detection baselines are computed strictly over historical events, eliminating outlier self-pollution within a single network round-trip (~0.8ms).
 * **Two-Tier Anomaly Engine with Graceful Degradation**:
-  * *Tier 1 (Dynamic)*: Evaluates event values against $1.5 \times \text{rolling\_avg}$.
+  * *Tier 1 (Dynamic)*: Evaluates event values against `1.5 × rolling_avg`.
   * *Tier 2 (Static Fallback)*: If Redis is unavailable or on cold start, gracefully falls back to static thresholding (`value > 1000.0`) without interrupting the pipeline.
 * **At-Least-Once Delivery & Poison Pill Discard**: Offsets are committed only after successful PostgreSQL persistence. Downstream outages halt the partition claim without monotonic advancement. Unparseable JSON and semantic invalid arguments (`codes.InvalidArgument`) are deliberately dropped and logged (`return nil`) to preserve partition liveness.
 * **Distributed Observability**: Instrumentated with OpenTelemetry Go SDK and `otelgrpc`, generating 5-span flame graphs in Jaeger correlated by W3C `traceparent` headers and stored in PostgreSQL.

@@ -95,5 +95,5 @@ SurgesEntry supports deterministic stream reprocessing on demand via Kafka offse
 
 To isolate cache infrastructure failures from the ingestion stream, the Processing Service implements a two-tier anomaly detection hierarchy:
 
-* **Tier 1 (Dynamic Rolling Window)**: When Redis is reachable, evaluates event value against $1.5 \times \text{rolling\_avg}$ using atomic `rdb.TxPipeline()` pre-write evaluation.
+* **Tier 1 (Dynamic Rolling Window)**: When Redis is reachable, evaluates event value against `1.5 × rolling_avg` using atomic `rdb.TxPipeline()` pre-write evaluation.
 * **Tier 2 (Static Fallback Heuristic)**: If Redis connection times out or fails, the call is caught within an isolated error boundary. Processing logs a warning, sets `rolling_avg = NULL`, and evaluates against a static threshold (`value > 1000.0`). The event is persisted to PostgreSQL and the gRPC call returns success. Cache failure never halts stream ingestion.
