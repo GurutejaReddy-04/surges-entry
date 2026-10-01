@@ -3,7 +3,7 @@ permalink: /index.html
 ---
 
 # SurgesEntry — Distributed Event Processing Platform
-> *Production-hardened distributed event processing platform in Go with Kafka, gRPC, Redis, and Kubernetes.*
+> *Distributed event processing platform in Go with Kafka, gRPC, Redis, and Kubernetes.*
 
 Welcome to the **SurgesEntry** technical documentation hub.
 

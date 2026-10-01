@@ -1,5 +1,5 @@
 # SurgesEntry — Distributed Event Processing Platform
-> *Production-hardened distributed event processing platform in Go with Kafka, gRPC, Redis, and Kubernetes.*
+> *Distributed event processing platform in Go with Kafka, gRPC, Redis, and Kubernetes.*
 
 [![CI](https://github.com/GurutejaReddy-04/surges-entry/actions/workflows/ci.yml/badge.svg)](https://github.com/GurutejaReddy-04/surges-entry/actions/workflows/ci.yml)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-surges--entry-blue?style=flat&logo=github)](https://github.com/GurutejaReddy-04/surges-entry)

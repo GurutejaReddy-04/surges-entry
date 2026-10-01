@@ -6,7 +6,7 @@ Stateless Go microservices deployed into Kubernetes (`surges-entry` namespace) w
 
 ## Architecture & Networking Strategy
 
-Stateful infrastructure (Kafka KRaft, Redis, PostgreSQL, Jaeger) runs externally in Docker Compose on the host. This avoids managing in-cluster StatefulSets and PersistentVolumes for storage engines while showcasing production-grade microservice orchestration.
+Stateful infrastructure (Kafka KRaft, Redis, PostgreSQL, Jaeger) runs externally in Docker Compose on the host. This avoids managing in-cluster StatefulSets and PersistentVolumes for storage engines while showcasing production-style microservice orchestration.
 
 ```
 Host (Docker Compose)                   Kubernetes Cluster (surges-entry namespace)
