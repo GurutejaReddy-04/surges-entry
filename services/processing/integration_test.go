@@ -309,9 +309,19 @@ func TestIntegration_GracefulDegradation_WhenRedisIsDown(t *testing.T) {
 		t.Errorf("expected is_anomaly=true for value 1500.0 exceeding fallback threshold")
 	}
 
-	// Verify alert dispatched for the fallback anomaly
-	if len(mockNotif.sentAlerts) != 1 {
-		t.Errorf("expected 1 alert dispatched for fallback anomaly, got %d", len(mockNotif.sentAlerts))
+	// Verify alert dispatched for the fallback anomaly (allowing worker pool to process queue)
+	var alertsCount int
+	for retries := 0; retries < 20; retries++ {
+		mockNotif.mu.Lock()
+		alertsCount = len(mockNotif.sentAlerts)
+		mockNotif.mu.Unlock()
+		if alertsCount >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if alertsCount != 1 {
+		t.Errorf("expected 1 alert dispatched for fallback anomaly, got %d", alertsCount)
 	}
 
 	// Verify both rows in Postgres have rolling_avg IS NULL

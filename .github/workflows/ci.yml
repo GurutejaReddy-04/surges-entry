@@ -112,17 +112,14 @@ jobs:
           sed -i 's/<DB_HOST>/host.docker.internal/g' k8s/secret.yaml
           sed -i 's/<DB_NAME>/eventplatform/g' k8s/secret.yaml
 
-      - name: Validate Kubernetes Manifests (Dry-Run)
+      - name: Install Kubeconform
         run: |
-          kubectl apply --dry-run=client --validate=false -f k8s/namespace.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/secret.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/configmap.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/deployment-notification.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/service-notification.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/deployment-processing.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/service-processing.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/deployment-ingestion.yaml
-          kubectl apply --dry-run=client --validate=false -f k8s/service-ingestion.yaml
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate Kubernetes Manifests with Kubeconform
+        run: |
+          kubeconform -strict -summary -kubernetes-version 1.28.0 k8s/namespace.yaml k8s/secret.yaml k8s/configmap.yaml k8s/deployment-*.yaml k8s/service-*.yaml
 
   # ── 6. Live Integration Suite ───────────────────────────────────────────────
   integration-tests:
