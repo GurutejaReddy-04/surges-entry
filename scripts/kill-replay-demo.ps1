@@ -188,7 +188,7 @@ Write-Host "  Events recovered from outage : $part2Count / 5" -ForegroundColor W
 Write-Host "  Missing events               : $(15 - $totalCount)" -ForegroundColor White
 
 if ($totalCount -eq 15) {
-    Log-Pass "VERIFIED ZERO EVENT LOSS UNDER CONSUMER CRASH! 15/15 events recovered via Kafka offset resumption."
+    Log-Pass "15/15 events were recovered in this consumer crash-recovery experiment."
     exit 0
 } else {
     Log-Fail "Data loss detected: Expected 15 events, but only $totalCount arrived in PostgreSQL."

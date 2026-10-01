@@ -33,6 +33,9 @@ SurgesEntry enforces strict separation between application code, public manifest
    - `docker-compose.yml` uses strict variable validation (`${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}`). If `.env` is omitted, Compose halts immediately rather than launching unauthenticated or default-password services.
    - Microservices validate database connection configuration on startup and exit immediately if required credentials are not supplied.
 
+### 1.2 Continuous Integration (CI) Ephemeral Test Credentials
+Integration tests executed in GitHub Actions run against disposable ephemeral service containers (Kafka KRaft, Redis 7, PostgreSQL 16). The CI workflow configuration (`.github/workflows/ci.yml`) provisions an isolated, throwaway runner password (`POSTGRES_PASSWORD: eventplatform_ci_password`) scoped strictly to the short-lived runner virtual machine. No active production, staging, or developer workstation credentials are committed to version control.
+
 ---
 
 ## 2. Container Sandboxing & Least Privilege

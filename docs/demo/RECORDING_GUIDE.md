@@ -54,7 +54,7 @@ Open two terminal windows side-by-side:
      - Total published: `15`
      - Total persisted: `15`
      - Missing events: `0`
-   - Prints `🚀 PASS: VERIFIED ZERO EVENT LOSS UNDER CONSUMER CRASH!`.
+   - Prints `🚀 PASS: 15/15 events were recovered in this consumer crash-recovery experiment.`.
 
 ---
 

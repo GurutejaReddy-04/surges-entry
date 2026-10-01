@@ -25,7 +25,7 @@ flowchart TD
 
     subgraph StateTier ["Storage & Caching Tier"]
         REDIS[("Redis 7 (Hot State)<br/>• Atomic TxPipeline (MULTI/EXEC)<br/>• Pre-write LRANGE -> LPUSH -> LTRIM<br/>• 1-Hour Rolling TTL")]
-        POSTGRES[("PostgreSQL 16 (Audit Store)<br/>• Table: processed_events<br/>• Indexed by trace_id & user_id<br/>• Poison Pill Quarantine")]
+        POSTGRES[("PostgreSQL 16 (Audit Store)<br/>• Table: processed_events<br/>• Indexed by trace_id & user_id")]
     end
 
     subgraph TelemetryTier ["Observability Tier"]
@@ -55,7 +55,7 @@ flowchart TD
 * **Key Design Decisions**:
   * **Partition Sequential Processing**: Reads events in strict partition sequence to maintain per-user FIFO ordering.
   * **Offset Advancement Defense**: Executes in-place exponential retries (up to 3 attempts) for transient errors. If an error is unrecoverable (e.g., PostgreSQL or Processing returns `codes.Unavailable`), it halts the partition claim immediately without marking the offset.
-  * **Poison Pill Quarantine**: Discards malformed JSON and semantic argument errors (`codes.InvalidArgument`) cleanly (`return nil`) to prevent infinite partition stall loops while logging quarantine diagnostics.
+  * **Poison Pill Drop-and-Log Boundary**: Discards malformed JSON and semantic argument errors (`codes.InvalidArgument`) cleanly (`return nil`) to prevent infinite partition stall loops while logging discard diagnostics.
   * **Root Span Generation**: Initiates the root W3C trace span `ingestion.consume_event` with partition and offset attributes, injecting trace context into outgoing gRPC metadata via `otelgrpc`.
 
 ### 2.2 Processing Service (`services/processing/`)
@@ -144,7 +144,7 @@ SurgesEntry provides an **at-least-once delivery contract for valid messages**, 
 | **Downstream Outage (Postgres / Processing)** | Ingestion halts partition consumption without marking offset | Offsets remain intact; stream pauses safely until downstream self-heals. |
 | **Redis Cache Outage** | Isolated error boundary in Processing; falls back to Tier-2 static threshold | Processing continues seamlessly; audit logs preserved; zero pipeline interruption. |
 | **Notification RPC Lag** | Asynchronous bounded worker channel (`alertQueue`, buffer 1000) | Core event processing latency is completely isolated from alert delivery delays. |
-| **Poison Pill / Malformed JSON** | Parser validates schemas; poison pill logs quarantine reason and drops cleanly | Message discarded (`return nil`) to prevent infinite partition consumer stalls. |
+| **Poison Pill / Malformed JSON** | Parser validates schemas; poison pill logs diagnostic reason and drops cleanly | Message discarded (`return nil`) to prevent infinite partition consumer stalls. |
 
 *(For detailed experimental conditions, see [docs/reliability.md](reliability.md).)*
 

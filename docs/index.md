@@ -14,7 +14,7 @@ Welcome to the **SurgesEntry** technical documentation hub.
 ## Technical Documentation Guides
 
 - **[System Architecture](architecture.md)**: Deep dive into microservice roles, data flow, implemented local hybrid demo vs. reference cloud production architecture, and architectural trade-offs.
-- **[Reliability & Fault-Tolerance](reliability.md)**: At-least-once delivery contract, poison-pill quarantine boundary, consumer crash resilience experiments, and defensive offset commit mechanics.
+- **[Reliability & Fault-Tolerance](reliability.md)**: At-least-once delivery contract, poison-pill drop-and-log boundary, consumer crash resilience experiments, and defensive offset commit mechanics.
 - **[Performance & Latency](performance.md)**: Redis `TxPipeline` atomic pre-write evaluation, outlier self-pollution defense, asynchronous worker pools, and trace flame graph analysis.
 - **[Benchmark Methodology & Provenance](../BENCHMARKS.md)**: Reconstructed experimental setup, simulator configuration gaps (`EVENT_RATE=200`), and step-by-step reproduction instructions.
 - **[Security & Secret Management](security.md)**: Secret decoupling (`.env.example`, `secret.example.yaml`), non-root container sandboxing, historical credential audit, and enterprise secrets architecture.

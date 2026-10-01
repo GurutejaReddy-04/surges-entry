@@ -159,7 +159,7 @@ echo "  Events recovered from outage : ${part2_count} / 5"
 echo "  Missing events               : $((15 - total_count))"
 
 if [ "$total_count" -ge 15 ] && [ "$part2_count" -ge 5 ]; then
-    echo -e "\n\033[1;32m🚀 PASS: VERIFIED ZERO EVENT LOSS UNDER CONSUMER CRASH! 15/15 events recovered via Kafka offset resumption.\033[0m\n"
+    echo -e "\n\033[1;32m🚀 PASS: 15/15 events were recovered in this consumer crash-recovery experiment.\033[0m\n"
     exit 0
 else
     echo -e "\n\033[1;31m💀 FAIL: Event loss detected! Expected 15 events, recovered ${total_count}.\033[0m\n"

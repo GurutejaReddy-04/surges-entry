@@ -6,7 +6,7 @@
 
 ## 1. The Core Reliability Contract
 
-The SurgesEntry platform provides an **at-least-once processing contract for structurally and semantically valid events**, coupled with a **deliberate discard/quarantine policy for malformed or invalid events**.
+The SurgesEntry platform provides an **at-least-once processing contract for structurally and semantically valid events**, coupled with a **deliberate discard policy (drop-and-log) for malformed or invalid events**.
 
 ```
                            Incoming Kafka Message

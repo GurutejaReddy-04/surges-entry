@@ -62,7 +62,7 @@ flowchart TD
 * **Two-Tier Anomaly Engine with Graceful Degradation**:
   * *Tier 1 (Dynamic)*: Evaluates event values against $1.5 \times \text{rolling\_avg}$.
   * *Tier 2 (Static Fallback)*: If Redis is unavailable or on cold start, gracefully falls back to static thresholding (`value > 1000.0`) without interrupting the pipeline.
-* **At-Least-Once Delivery & Poison Pill Quarantine**: Offsets are committed only after successful PostgreSQL persistence. Downstream outages halt the partition claim without monotonic advancement. Unparseable JSON and semantic invalid arguments (`codes.InvalidArgument`) are quarantined cleanly (`return nil`) to preserve partition liveness.
+* **At-Least-Once Delivery & Poison Pill Discard**: Offsets are committed only after successful PostgreSQL persistence. Downstream outages halt the partition claim without monotonic advancement. Unparseable JSON and semantic invalid arguments (`codes.InvalidArgument`) are deliberately dropped and logged (`return nil`) to preserve partition liveness.
 * **Distributed Observability**: Instrumentated with OpenTelemetry Go SDK and `otelgrpc`, generating 5-span flame graphs in Jaeger correlated by W3C `traceparent` headers and stored in PostgreSQL.
 
 ---
@@ -151,7 +151,7 @@ Deep-dive documentation is modularized in the [`docs/`](docs/) directory:
 | Guide | Description |
 |---|---|
 | **[docs/architecture.md](docs/architecture.md)** | Full system data flow, local hybrid vs. reference cloud production topology, and architectural trade-offs. |
-| **[docs/reliability.md](docs/reliability.md)** | At-least-once delivery contract, poison pill quarantine boundary, crash-recovery experiment, and offset replay. |
+| **[docs/reliability.md](docs/reliability.md)** | At-least-once delivery contract, poison pill drop-and-log boundary, crash-recovery experiment, and offset replay. |
 | **[docs/performance.md](docs/performance.md)** | Redis `TxPipeline` atomicity, outlier self-pollution defense, async alerting, and trace latency breakdown. |
 | **[BENCHMARKS.md](BENCHMARKS.md)** | Benchmark provenance, simulator configuration gap (`EVENT_RATE=200`), hardware specs, and reproduction protocol. |
 | **[docs/security.md](docs/security.md)** | Secret isolation (`.env.example`, `secret.example.yaml`), non-root container sandboxing, and historical credential audit. |
