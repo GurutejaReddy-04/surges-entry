@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+const defaultRedisWindowSize = 10
 
 type HotStateStore interface {
 	ComputeAverage(ctx context.Context, userID string, traceID string) *float64
@@ -24,6 +27,10 @@ type RedisHotStateStore struct {
 }
 
 func NewRedisHotStateStore(addr string, windowSize int, logger *slog.Logger) *RedisHotStateStore {
+	if windowSize <= 0 {
+		windowSize = defaultRedisWindowSize
+	}
+
 	rdb := redis.NewClient(&redis.Options{
 		Addr:         addr,
 		DialTimeout:  2 * time.Second,
@@ -46,9 +53,13 @@ func (s *RedisHotStateStore) Close() error {
 // Returns nil if the window is empty or Redis is unavailable.
 func (s *RedisHotStateStore) ComputeAverage(ctx context.Context, userID string, traceID string) *float64 {
 	key := fmt.Sprintf("window:%s", userID)
+	winSize := s.windowSize
+	if winSize <= 0 {
+		winSize = defaultRedisWindowSize
+	}
 
 	pipe := s.client.TxPipeline()
-	lrangeCmd := pipe.LRange(ctx, key, 0, -1)
+	lrangeCmd := pipe.LRange(ctx, key, 0, int64(winSize-1))
 	pipe.Expire(ctx, key, 3600*time.Second)
 
 	_, err := pipe.Exec(ctx)
@@ -87,10 +98,15 @@ func (s *RedisHotStateStore) CommitEvent(ctx context.Context, userID string, val
 		return nil
 	}
 
+	winSize := s.windowSize
+	if winSize <= 0 {
+		winSize = defaultRedisWindowSize
+	}
+
 	// Normal event: Atomic commit to rolling window
 	pipe := s.client.TxPipeline()
 	pipe.LPush(ctx, key, value)
-	pipe.LTrim(ctx, key, 0, int64(s.windowSize-1))
+	pipe.LTrim(ctx, key, 0, int64(winSize-1))
 	pipe.Expire(ctx, key, 3600*time.Second)
 
 	_, err := pipe.Exec(ctx)
@@ -111,10 +127,15 @@ func (s *RedisHotStateStore) CommitEvent(ctx context.Context, userID string, val
 func (s *RedisHotStateStore) UpdateAndComputeAverage(ctx context.Context, userID string, value float64, traceID string) *float64 {
 	key := fmt.Sprintf("window:%s", userID)
 
+	winSize := s.windowSize
+	if winSize <= 0 {
+		winSize = defaultRedisWindowSize
+	}
+
 	pipe := s.client.TxPipeline()
 	lrangeCmd := pipe.LRange(ctx, key, 0, -1)
 	pipe.LPush(ctx, key, value)
-	pipe.LTrim(ctx, key, 0, int64(s.windowSize-1))
+	pipe.LTrim(ctx, key, 0, int64(winSize-1))
 	pipe.Expire(ctx, key, 3600*time.Second)
 
 	_, err := pipe.Exec(ctx)
@@ -140,7 +161,7 @@ func computeAverageFromStrings(vals []string, logger *slog.Logger, ctx context.C
 	var count int
 	for _, vStr := range vals {
 		v, parseErr := strconv.ParseFloat(vStr, 64)
-		if parseErr != nil {
+		if parseErr != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			if logger != nil {
 				logger.WarnContext(ctx, "skipping malformed cached float in redis window",
 					"value_str", vStr,

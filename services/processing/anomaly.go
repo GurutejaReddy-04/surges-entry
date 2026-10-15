@@ -1,5 +1,7 @@
 package main
 
+import "math"
+
 // DetermineAnomaly applies a two-tier rule to detect anomalous values.
 //
 // Tier 1 (Primary - Redis available): If rollingAvg is available, flag anomaly
@@ -9,6 +11,11 @@ package main
 // absolute threshold check (value > fallbackThreshold).
 func DetermineAnomaly(value float64, rollingAvg *float64, deviationMultiplier, fallbackThreshold float64) bool {
 	if rollingAvg != nil {
+		if math.IsNaN(*rollingAvg) || math.IsInf(*rollingAvg, 0) || *rollingAvg <= 0 {
+			// Invalid, zero, or negative baseline: fallback to static absolute threshold check
+			return value > fallbackThreshold
+		}
+		// Normal positive baseline surge evaluation
 		threshold := *rollingAvg * deviationMultiplier
 		return value > threshold
 	}

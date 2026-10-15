@@ -80,3 +80,26 @@ func TestDetermineAnomaly_Tier2_FallbackWithoutRollingAvg(t *testing.T) {
 		})
 	}
 }
+
+func TestDetermineAnomaly_ZeroAndNegativeRollingAvg(t *testing.T) {
+	zeroAvg := 0.0
+	negativeAvg := -50.0
+	multiplier := 1.5
+	fallback := 1000.0
+
+	// When rolling average is 0, it should not trigger on small values (prevents false positive storms)
+	if DetermineAnomaly(50.0, &zeroAvg, multiplier, fallback) {
+		t.Errorf("expected value 50.0 to NOT be an anomaly when avg is 0 and fallback is 1000")
+	}
+	if !DetermineAnomaly(1500.0, &zeroAvg, multiplier, fallback) {
+		t.Errorf("expected value 1500.0 to be an anomaly when avg is 0 and fallback is 1000")
+	}
+
+	// When rolling average is negative, fallback threshold applies
+	if DetermineAnomaly(50.0, &negativeAvg, multiplier, fallback) {
+		t.Errorf("expected value 50.0 to NOT be an anomaly when avg is negative and fallback is 1000")
+	}
+	if !DetermineAnomaly(1200.0, &negativeAvg, multiplier, fallback) {
+		t.Errorf("expected value 1200.0 to be an anomaly when avg is negative and fallback is 1000")
+	}
+}

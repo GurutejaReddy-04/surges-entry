@@ -72,6 +72,14 @@ func TestComputeAverageFromStrings(t *testing.T) {
 			vals:     []string{"bad1", "bad2"},
 			expected: nil,
 		},
+		{
+			name: "skips NaN and Inf cached values",
+			vals: []string{"NaN", "Inf", "-Inf", "25.0"},
+			expected: func() *float64 {
+				v := 25.0
+				return &v
+			}(),
+		},
 	}
 
 	for _, tc := range tests {
