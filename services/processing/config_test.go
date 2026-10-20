@@ -90,3 +90,20 @@ func TestLoadConfig(t *testing.T) {
 		t.Errorf("expected fallback int 10, got %d", fallbackCfg.RedisWindowSize)
 	}
 }
+
+func TestLoadConfig_RejectsInvalidWindowAndMultiplier(t *testing.T) {
+	t.Setenv("REDIS_WINDOW_SIZE", "0")
+	t.Setenv("DEVIATION_MULTIPLIER", "-2.5")
+	t.Setenv("FALLBACK_THRESHOLD", "NaN")
+
+	cfg := LoadConfig()
+	if cfg.RedisWindowSize != 10 {
+		t.Fatalf("expected fallback RedisWindowSize=10 for 0, got %d", cfg.RedisWindowSize)
+	}
+	if cfg.DeviationMultiplier != 1.5 {
+		t.Fatalf("expected fallback DeviationMultiplier=1.5 for -2.5, got %f", cfg.DeviationMultiplier)
+	}
+	if cfg.FallbackThreshold != 1000.0 {
+		t.Fatalf("expected fallback FallbackThreshold=1000.0 for NaN, got %f", cfg.FallbackThreshold)
+	}
+}

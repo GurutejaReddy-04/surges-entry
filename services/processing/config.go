@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"os"
 	"strconv"
 )
@@ -28,7 +29,15 @@ func getEnvFloat(key string, fallback float64) float64 {
 		return fallback
 	}
 	f, err := strconv.ParseFloat(val, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return fallback
+	}
+	return f
+}
+
+func getEnvPositiveFloat(key string, fallback float64) float64 {
+	f := getEnvFloat(key, fallback)
+	if f <= 0 {
 		return fallback
 	}
 	return f
@@ -46,14 +55,22 @@ func getEnvInt(key string, fallback int) int {
 	return i
 }
 
+func getEnvPositiveInt(key string, fallback int) int {
+	i := getEnvInt(key, fallback)
+	if i <= 0 {
+		return fallback
+	}
+	return i
+}
+
 func LoadConfig() Config {
 	return Config{
 		GRPCPort:            getEnv("GRPC_PORT", "50051"),
 		RedisAddr:           getEnv("REDIS_ADDR", "localhost:6379"),
 		PostgresDSN:         getEnv("POSTGRES_DSN", ""),
 		FallbackThreshold:   getEnvFloat("FALLBACK_THRESHOLD", 1000.0),
-		DeviationMultiplier: getEnvFloat("DEVIATION_MULTIPLIER", 1.5),
-		RedisWindowSize:     getEnvInt("REDIS_WINDOW_SIZE", 10),
+		DeviationMultiplier: getEnvPositiveFloat("DEVIATION_MULTIPLIER", 1.5),
+		RedisWindowSize:     getEnvPositiveInt("REDIS_WINDOW_SIZE", 10),
 		NotificationAddr:    getEnv("NOTIFICATION_GRPC_ADDR", "localhost:50052"),
 	}
 }

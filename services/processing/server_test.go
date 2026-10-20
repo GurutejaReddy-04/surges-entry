@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,16 +69,23 @@ func (m *mockHotStateStore) Close() error {
 }
 
 type mockEventRepository struct {
-	mu          sync.Mutex
-	savedRecord *ProcessedEventRecord
-	returnErr   error
+	mu             sync.Mutex
+	savedRecord    *ProcessedEventRecord
+	returnErr      error
+	isDuplicate    bool
 }
 
-func (m *mockEventRepository) SaveProcessedEvent(ctx context.Context, record *ProcessedEventRecord) error {
+func (m *mockEventRepository) SaveProcessedEvent(ctx context.Context, record *ProcessedEventRecord) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.savedRecord = record
-	return m.returnErr
+	if m.returnErr != nil {
+		return false, m.returnErr
+	}
+	if m.isDuplicate {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (m *mockEventRepository) Close() {}
@@ -603,5 +611,294 @@ func TestEdgeCase_DualWrite_DBFailureLeavesRedisUnmutated(t *testing.T) {
 	// Core Dual-Write Guarantee: Redis CommitEvent was NEVER called!
 	if mockHotState.committedCount != 0 {
 		t.Fatalf("DUAL WRITE VIOLATION: Redis CommitEvent was called %d times despite DB failure!", mockHotState.committedCount)
+	}
+}
+
+func TestEventProcessor_StopIdempotency(t *testing.T) {
+	mockHotState := &mockHotStateStore{}
+	mockRepo := &mockEventRepository{}
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+
+	// Calling Stop() once
+	processor.Stop()
+
+	// Calling Stop() again should NOT panic
+	processor.Stop()
+}
+
+func TestEventProcessor_StopDrainsAlertQueue(t *testing.T) {
+	mockHotState := &mockHotStateStore{}
+	mockRepo := &mockEventRepository{}
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+
+	// Enqueue tasks directly into alertQueue
+	for i := 0; i < 10; i++ {
+		processor.alertQueue <- &alertTask{
+			req: &eventpb.AlertRequest{
+				UserId:     "user-drain",
+				EventType:  "drain",
+				EventValue: float64(i),
+				IsAnomaly:  true,
+			},
+		}
+	}
+
+	// Stop should wait until all queued tasks are processed
+	processor.Stop()
+
+	mockNotif.mu.Lock()
+	count := len(mockNotif.sentAlerts)
+	mockNotif.mu.Unlock()
+
+	if count != 10 {
+		t.Fatalf("expected all 10 buffered alerts to be drained on Stop(), got %d", count)
+	}
+}
+
+func TestProcessEvent_DuplicateReplaySkipsRedisCommit(t *testing.T) {
+	avg := 50.0
+	mockHotState := &mockHotStateStore{returnAvg: &avg}
+	mockRepo := &mockEventRepository{isDuplicate: true} // Simulates ON CONFLICT DO NOTHING
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+	defer processor.Stop()
+
+	req := &eventpb.Event{
+		UserId:    "user-replay",
+		EventType: "txn",
+		Value:     60.0,
+		Timestamp: time.Now().Unix(),
+		TraceId:   "trace-replay-dup",
+	}
+
+	res, err := processor.ProcessEvent(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error on duplicate replay: %v", err)
+	}
+	if !res.Success {
+		t.Errorf("expected success true for duplicate event")
+	}
+
+	// Verify that Redis was NOT committed for the duplicate
+	if mockHotState.committedCount != 0 {
+		t.Errorf("expected Redis CommitEvent to be skipped for duplicate replay, but was called %d times", mockHotState.committedCount)
+	}
+}
+
+func TestProcessEvent_PreservesCallerTraceIDUnderActiveOTelSpan(t *testing.T) {
+	avg := 50.0
+	mockHotState := &mockHotStateStore{returnAvg: &avg}
+	mockRepo := &mockEventRepository{}
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+	defer processor.Stop()
+
+	otelHex := "4bf92f3577b34da6a3ce929d0e0e4736"
+	otelTID, _ := trace.TraceIDFromHex(otelHex)
+	spanCtx := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    otelTID,
+		SpanID:     trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8},
+		TraceFlags: trace.FlagsSampled,
+	})
+	ctx := trace.ContextWithSpanContext(context.Background(), spanCtx)
+
+	req := &eventpb.Event{
+		UserId:    "user-idemp",
+		EventType: "transaction",
+		Value:     60.0,
+		Timestamp: time.Now().Unix(),
+		TraceId:   "stable-replay-key-42",
+	}
+
+	if _, err := processor.ProcessEvent(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mockRepo.mu.Lock()
+	defer mockRepo.mu.Unlock()
+	if mockRepo.savedRecord.TraceID != "stable-replay-key-42" {
+		t.Fatalf("expected caller trace_id 'stable-replay-key-42' to be preserved, got %q", mockRepo.savedRecord.TraceID)
+	}
+}
+
+func TestProcessEvent_DuplicateAnomalySkipsAlertDispatch(t *testing.T) {
+	avg := 50.0
+	mockHotState := &mockHotStateStore{returnAvg: &avg}
+	mockRepo := &mockEventRepository{isDuplicate: true}
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+	defer processor.Stop()
+
+	req := &eventpb.Event{
+		UserId:    "user-dup-anomaly",
+		EventType: "transaction",
+		Value:     500.0,
+		Timestamp: time.Now().Unix(),
+		TraceId:   "dup-anomaly-key",
+	}
+
+	res, err := processor.ProcessEvent(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatal("expected success=true")
+	}
+
+	processor.Stop()
+
+	mockNotif.mu.Lock()
+	defer mockNotif.mu.Unlock()
+	if len(mockNotif.sentAlerts) != 0 {
+		t.Fatalf("expected 0 alerts dispatched for duplicate replayed anomaly, got %d", len(mockNotif.sentAlerts))
+	}
+	if mockHotState.committedCount != 0 {
+		t.Fatalf("expected 0 Redis commits for duplicate replayed anomaly, got %d", mockHotState.committedCount)
+	}
+}
+
+type cancelOnFirstCommitStore struct {
+	cancel  context.CancelFunc
+	commits atomic.Int32
+}
+
+func (c *cancelOnFirstCommitStore) ComputeAverage(ctx context.Context, userID, traceID string) *float64 {
+	return nil
+}
+func (c *cancelOnFirstCommitStore) CommitEvent(ctx context.Context, userID string, value float64, isAnomaly bool, traceID string) error {
+	c.commits.Add(1)
+	c.cancel()
+	return errors.New("redis timeout")
+}
+func (c *cancelOnFirstCommitStore) UpdateAndComputeAverage(ctx context.Context, userID string, value float64, traceID string) *float64 {
+	return nil
+}
+func (c *cancelOnFirstCommitStore) Close() error { return nil }
+
+func TestProcessEvent_RedisCommitRetryStopsImmediatelyOnContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := &cancelOnFirstCommitStore{cancel: cancel}
+	repo := &mockEventRepository{}
+	processor := NewEventProcessor(store, repo, nil, testConfig(), testLogger())
+	defer processor.Stop()
+
+	req := &eventpb.Event{
+		UserId:    "user-cancel",
+		EventType: "click",
+		Value:     10.0,
+		Timestamp: time.Now().Unix(),
+		TraceId:   "trace-cancel",
+	}
+
+	if _, err := processor.ProcessEvent(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.commits.Load() != 1 {
+		t.Fatalf("expected CommitEvent retry loop to stop immediately on ctx cancel (1 call), got %d", store.commits.Load())
+	}
+}
+
+type overlapDetectingHotState struct {
+	mu       sync.Mutex
+	inFlight map[string]int
+	overlaps atomic.Int32
+}
+
+func (o *overlapDetectingHotState) ComputeAverage(ctx context.Context, userID, traceID string) *float64 {
+	o.mu.Lock()
+	o.inFlight[userID]++
+	if o.inFlight[userID] > 1 {
+		o.overlaps.Add(1)
+	}
+	o.mu.Unlock()
+	time.Sleep(2 * time.Millisecond)
+	return nil
+}
+
+func (o *overlapDetectingHotState) CommitEvent(ctx context.Context, userID string, value float64, isAnomaly bool, traceID string) error {
+	o.mu.Lock()
+	o.inFlight[userID]--
+	o.mu.Unlock()
+	return nil
+}
+
+func (o *overlapDetectingHotState) UpdateAndComputeAverage(ctx context.Context, userID string, value float64, traceID string) *float64 {
+	return nil
+}
+func (o *overlapDetectingHotState) Close() error { return nil }
+
+func TestProcessEvent_PerUserConcurrencySerialization(t *testing.T) {
+	store := &overlapDetectingHotState{inFlight: make(map[string]int)}
+	repo := &mockEventRepository{}
+	processor := NewEventProcessor(store, repo, nil, testConfig(), testLogger())
+	defer processor.Stop()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, err := processor.ProcessEvent(context.Background(), &eventpb.Event{
+				UserId:    "same-user-race",
+				EventType: "txn",
+				Value:     10.0,
+				Timestamp: time.Now().Unix(),
+			})
+			if err != nil {
+				t.Errorf("goroutine %d failed: %v", idx, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if overlaps := store.overlaps.Load(); overlaps != 0 {
+		t.Fatalf("detected %d concurrent Read->Commit overlaps for the same user_id", overlaps)
+	}
+}
+
+type hangingNotificationClient struct{}
+
+func (h *hangingNotificationClient) SendAlert(ctx context.Context, in *eventpb.AlertRequest, opts ...grpc.CallOption) (*eventpb.AlertResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestEventProcessor_StopBoundedDrainWithHangingNotification(t *testing.T) {
+	processor := NewEventProcessor(&mockHotStateStore{}, &mockEventRepository{}, &hangingNotificationClient{}, testConfig(), testLogger())
+	processor.drainTimeout = 150 * time.Millisecond
+
+	for i := 0; i < 50; i++ {
+		processor.alertQueue <- &alertTask{
+			req: &eventpb.AlertRequest{UserId: "u-hang", EventType: "txn"},
+		}
+	}
+
+	start := time.Now()
+	processor.Stop()
+	elapsed := time.Since(start)
+
+	if elapsed > 1*time.Second {
+		t.Fatalf("expected Stop() to respect bounded drain timeout, took %v", elapsed)
+	}
+}
+
+func TestProcessEvent_RejectsEmptyEventTypeAndWhitespaceUserID(t *testing.T) {
+	processor := NewEventProcessor(&mockHotStateStore{}, &mockEventRepository{}, nil, testConfig(), testLogger())
+	defer processor.Stop()
+
+	if _, err := processor.ProcessEvent(context.Background(), &eventpb.Event{UserId: "   ", EventType: "txn", Value: 10}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument for whitespace user_id, got %v", err)
+	}
+	if _, err := processor.ProcessEvent(context.Background(), &eventpb.Event{UserId: "u1", EventType: "   ", Value: 10}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument for empty event_type, got %v", err)
 	}
 }
