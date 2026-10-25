@@ -12,8 +12,8 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.KafkaTopic != "events" {
 		t.Errorf("expected default topic events, got %s", cfg.KafkaTopic)
 	}
-	if cfg.ConsumerGroupID != "ingestion-service-group" {
-		t.Errorf("expected default group ingestion-service-group, got %s", cfg.ConsumerGroupID)
+	if cfg.ConsumerGroupID != "surges-entry-ingestion-group" {
+		t.Errorf("expected default group surges-entry-ingestion-group, got %s", cfg.ConsumerGroupID)
 	}
 	if cfg.ProcessingTarget != "localhost:50051" {
 		t.Errorf("expected default target localhost:50051, got %s", cfg.ProcessingTarget)
@@ -59,5 +59,13 @@ func TestNewSaramaConfig(t *testing.T) {
 	}
 	if !cfg.Consumer.Return.Errors {
 		t.Errorf("expected Return.Errors=true")
+	}
+}
+
+func TestLoadConfig_FiltersEmptyBrokers(t *testing.T) {
+	t.Setenv("KAFKA_BROKERS", "broker1:9092, , broker2:9092,")
+	cfg := LoadConfig()
+	if len(cfg.KafkaBrokers) != 2 || cfg.KafkaBrokers[0] != "broker1:9092" || cfg.KafkaBrokers[1] != "broker2:9092" {
+		t.Fatalf("expected [broker1:9092 broker2:9092], got %v", cfg.KafkaBrokers)
 	}
 }

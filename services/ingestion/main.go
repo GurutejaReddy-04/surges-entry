@@ -4,12 +4,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	eventpb "surges-entry/proto/gen/event"
 
@@ -17,7 +21,25 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
+
+const (
+	internalAuthHeader          = "x-surges-internal-token"
+	initialConsumeBackoff       = 250 * time.Millisecond
+	maxConsumeBackoff           = 10 * time.Second
+	unhealthyConsecutiveErrsMax = 3
+)
+
+func authUnaryClientInterceptor() grpc.UnaryClientInterceptor {
+	token := os.Getenv("INTERNAL_AUTH_TOKEN")
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		if token != "" {
+			ctx = metadata.AppendToOutgoingContext(ctx, internalAuthHeader, token)
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
 
 func newSaramaConfig() *sarama.Config {
 	config := sarama.NewConfig()
@@ -30,37 +52,112 @@ func newSaramaConfig() *sarama.Config {
 	return config
 }
 
-func newHealthServer(port string) *http.Server {
+func newHealthServer(port string, isHealthy ...func() bool) *http.Server {
 	healthMux := http.NewServeMux()
 	healthMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if len(isHealthy) > 0 && isHealthy[0] != nil && !isHealthy[0]() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("unhealthy"))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	return &http.Server{Addr: ":" + port, Handler: healthMux}
+	return &http.Server{
+		Addr:              ":" + port,
+		Handler:           healthMux,
+		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
 }
 
-func runConsumerLoops(ctx context.Context, cg sarama.ConsumerGroup, topic string, handler sarama.ConsumerGroupHandler, logger *slog.Logger) {
-	// Consumer error listener
+func runConsumerLoops(ctx context.Context, cg sarama.ConsumerGroup, topic string, handler sarama.ConsumerGroupHandler, logger *slog.Logger, liveFlag ...*atomic.Bool) *sync.WaitGroup {
+	var isLive *atomic.Bool
+	if len(liveFlag) > 0 {
+		isLive = liveFlag[0]
+	}
+
+	var wg sync.WaitGroup
+
+	// Consumer error listener with graceful context termination
+	wg.Add(1)
 	go func() {
-		for err := range cg.Errors() {
-			logger.Error("consumer group error", "error", err)
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err, ok := <-cg.Errors():
+				if !ok {
+					return
+				}
+				logger.Error("consumer group error", "error", err)
+			}
 		}
 	}()
 
-	// Ingestion consumption loop
+	// Ingestion consumption loop with exponential backoff and liveness reporting
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
+		defer func() {
+			if isLive != nil {
+				isLive.Store(false)
+			}
+		}()
+
+		backoff := initialConsumeBackoff
+		consecutiveErrors := 0
+
 		for {
-			if err := cg.Consume(ctx, []string{topic}, handler); err != nil {
-				if ctx.Err() != nil {
+			err := cg.Consume(ctx, []string{topic}, handler)
+			if err != nil {
+				if ctx.Err() != nil || errors.Is(err, sarama.ErrClosedConsumerGroup) {
 					return
 				}
-				logger.Error("error during partition consumption", "error", err)
+
+				consecutiveErrors++
+				if isLive != nil && consecutiveErrors >= unhealthyConsecutiveErrsMax {
+					isLive.Store(false)
+				}
+
+				logger.Error("error during partition consumption; backing off before rejoin",
+					"error", err,
+					"consecutive_errors", consecutiveErrors,
+					"backoff_ms", backoff.Milliseconds(),
+				)
+
+				timer := time.NewTimer(backoff)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+
+				backoff *= 2
+				if backoff > maxConsumeBackoff {
+					backoff = maxConsumeBackoff
+				}
+				continue
 			}
+
+			// Clean consume cycle (e.g. normal rebalance): reset backoff and restore healthy status
+			backoff = initialConsumeBackoff
+			consecutiveErrors = 0
+			if isLive != nil {
+				isLive.Store(true)
+			}
+
 			if ctx.Err() != nil {
 				return
 			}
 		}
 	}()
+
+	return &wg
 }
 
 func initGRPCClient(target string) (*grpc.ClientConn, error) {
@@ -68,6 +165,7 @@ func initGRPCClient(target string) (*grpc.ClientConn, error) {
 		target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithUnaryInterceptor(authUnaryClientInterceptor()),
 		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig": [{"round_robin":{}}]}`),
 	)
 }
@@ -82,7 +180,11 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		logger.Warn("failed to initialize tracer provider; running without telemetry", "error", err)
 	} else {
-		defer shutdownTracer(context.Background())
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = shutdownTracer(shutdownCtx)
+		}()
 	}
 
 	// Establish gRPC connection to Processing Service with OpenTelemetry client stats handler
@@ -90,37 +192,56 @@ func run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("failed to create grpc client connection: %w", err)
 	}
-	defer grpcConn.Close()
+
+	var isConsumerLive atomic.Bool
+	isConsumerLive.Store(true)
 
 	processingClient := eventpb.NewProcessingServiceClient(grpcConn)
 	handler := NewIngestionHandler(processingClient, logger, cfg.GRPCTimeout)
+	handler.onHealthy = func() {
+		isConsumerLive.Store(true)
+	}
 
 	// Initialize Kafka Consumer Group
 	saramaCfg := newSaramaConfig()
 	consumerGroup, err := initConsumerGroup(cfg.KafkaBrokers, cfg.ConsumerGroupID, saramaCfg)
 	if err != nil {
+		_ = grpcConn.Close()
 		return fmt.Errorf("failed to create sarama consumer group: %w", err)
 	}
-	defer consumerGroup.Close()
 
 	// Lightweight HTTP health probe on port 8080 for container health checks
 	healthPort := getEnv("HEALTH_PORT", "8080")
-	httpHealthServer := newHealthServer(healthPort)
+	httpHealthServer := newHealthServer(healthPort, isConsumerLive.Load)
 	go func() {
 		if err := httpHealthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("http health check server error", "error", err)
 		}
 	}()
 	defer func() {
-		_ = httpHealthServer.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpHealthServer.Shutdown(shutdownCtx)
 	}()
 
-	runConsumerLoops(ctx, consumerGroup, cfg.KafkaTopic, handler, logger)
+	wg := runConsumerLoops(ctx, consumerGroup, cfg.KafkaTopic, handler, logger, &isConsumerLive)
 
 	logger.Info("ingestion service is actively consuming messages", "health_port", healthPort)
 	<-ctx.Done()
 
 	logger.Info("shutting down ingestion service gracefully")
+	isConsumerLive.Store(false)
+
+	// Clean shutdown sequence:
+	// 1. Close consumer group to stop receiving new Kafka messages and signal cg.Consume to exit
+	_ = consumerGroup.Close()
+
+	// 2. Wait for consumer loops to exit cleanly, ensuring in-flight messages finish processing
+	wg.Wait()
+
+	// 3. Now safe to close gRPC client connection
+	_ = grpcConn.Close()
+
 	return nil
 }
 

@@ -23,15 +23,21 @@ func getEnv(key, fallback string) string {
 
 func LoadConfig() Config {
 	brokerStr := getEnv("KAFKA_BROKERS", getEnv("KAFKA_BROKER", "localhost:9092"))
-	brokers := strings.Split(brokerStr, ",")
-	for i := range brokers {
-		brokers[i] = strings.TrimSpace(brokers[i])
+	rawBrokers := strings.Split(brokerStr, ",")
+	brokers := make([]string, 0, len(rawBrokers))
+	for _, b := range rawBrokers {
+		if trimmed := strings.TrimSpace(b); trimmed != "" {
+			brokers = append(brokers, trimmed)
+		}
+	}
+	if len(brokers) == 0 {
+		brokers = []string{"localhost:9092"}
 	}
 
 	return Config{
 		KafkaBrokers:     brokers,
 		KafkaTopic:       getEnv("KAFKA_TOPIC", "events"),
-		ConsumerGroupID:  getEnv("KAFKA_CONSUMER_GROUP", "ingestion-service-group"),
+		ConsumerGroupID:  getEnv("KAFKA_CONSUMER_GROUP", "surges-entry-ingestion-group"),
 		ProcessingTarget: getEnv("PROCESSING_ADDR", "localhost:50051"),
 		GRPCTimeout:      5 * time.Second,
 	}
