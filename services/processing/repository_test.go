@@ -45,12 +45,15 @@ func TestPostgresEventRepository_CloseNil(t *testing.T) {
 
 func TestPostgresEventRepository_SaveProcessedEvent_NilPool(t *testing.T) {
 	repo := &PostgresEventRepository{pool: nil, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	err := repo.SaveProcessedEvent(context.Background(), &ProcessedEventRecord{
+	inserted, err := repo.SaveProcessedEvent(context.Background(), &ProcessedEventRecord{
 		UserID:     "user-1",
 		EventType:  "login",
 		EventValue: 10,
 	})
 	if err == nil {
 		t.Error("expected error when saving to nil pool, got nil")
+	}
+	if inserted {
+		t.Error("expected inserted to be false on nil pool error")
 	}
 }
