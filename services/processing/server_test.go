@@ -68,16 +68,23 @@ func (m *mockHotStateStore) Close() error {
 }
 
 type mockEventRepository struct {
-	mu          sync.Mutex
-	savedRecord *ProcessedEventRecord
-	returnErr   error
+	mu             sync.Mutex
+	savedRecord    *ProcessedEventRecord
+	returnErr      error
+	isDuplicate    bool
 }
 
-func (m *mockEventRepository) SaveProcessedEvent(ctx context.Context, record *ProcessedEventRecord) error {
+func (m *mockEventRepository) SaveProcessedEvent(ctx context.Context, record *ProcessedEventRecord) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.savedRecord = record
-	return m.returnErr
+	if m.returnErr != nil {
+		return false, m.returnErr
+	}
+	if m.isDuplicate {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (m *mockEventRepository) Close() {}
@@ -603,5 +610,81 @@ func TestEdgeCase_DualWrite_DBFailureLeavesRedisUnmutated(t *testing.T) {
 	// Core Dual-Write Guarantee: Redis CommitEvent was NEVER called!
 	if mockHotState.committedCount != 0 {
 		t.Fatalf("DUAL WRITE VIOLATION: Redis CommitEvent was called %d times despite DB failure!", mockHotState.committedCount)
+	}
+}
+
+func TestEventProcessor_StopIdempotency(t *testing.T) {
+	mockHotState := &mockHotStateStore{}
+	mockRepo := &mockEventRepository{}
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+
+	// Calling Stop() once
+	processor.Stop()
+
+	// Calling Stop() again should NOT panic
+	processor.Stop()
+}
+
+func TestEventProcessor_StopDrainsAlertQueue(t *testing.T) {
+	mockHotState := &mockHotStateStore{}
+	mockRepo := &mockEventRepository{}
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+
+	// Enqueue tasks directly into alertQueue
+	for i := 0; i < 10; i++ {
+		processor.alertQueue <- &alertTask{
+			req: &eventpb.AlertRequest{
+				UserId:     "user-drain",
+				EventType:  "drain",
+				EventValue: float64(i),
+				IsAnomaly:  true,
+			},
+		}
+	}
+
+	// Stop should wait until all queued tasks are processed
+	processor.Stop()
+
+	mockNotif.mu.Lock()
+	count := len(mockNotif.sentAlerts)
+	mockNotif.mu.Unlock()
+
+	if count != 10 {
+		t.Fatalf("expected all 10 buffered alerts to be drained on Stop(), got %d", count)
+	}
+}
+
+func TestProcessEvent_DuplicateReplaySkipsRedisCommit(t *testing.T) {
+	avg := 50.0
+	mockHotState := &mockHotStateStore{returnAvg: &avg}
+	mockRepo := &mockEventRepository{isDuplicate: true} // Simulates ON CONFLICT DO NOTHING
+	mockNotif := &mockNotificationClient{}
+
+	processor := NewEventProcessor(mockHotState, mockRepo, mockNotif, testConfig(), testLogger())
+	defer processor.Stop()
+
+	req := &eventpb.Event{
+		UserId:    "user-replay",
+		EventType: "txn",
+		Value:     60.0,
+		Timestamp: time.Now().Unix(),
+		TraceId:   "trace-replay-dup",
+	}
+
+	res, err := processor.ProcessEvent(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error on duplicate replay: %v", err)
+	}
+	if !res.Success {
+		t.Errorf("expected success true for duplicate event")
+	}
+
+	// Verify that Redis was NOT committed for the duplicate
+	if mockHotState.committedCount != 0 {
+		t.Errorf("expected Redis CommitEvent to be skipped for duplicate replay, but was called %d times", mockHotState.committedCount)
 	}
 }

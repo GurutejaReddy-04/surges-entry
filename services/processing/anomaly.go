@@ -9,6 +9,11 @@ package main
 // absolute threshold check (value > fallbackThreshold).
 func DetermineAnomaly(value float64, rollingAvg *float64, deviationMultiplier, fallbackThreshold float64) bool {
 	if rollingAvg != nil {
+		if *rollingAvg <= 0 {
+			// Zero or negative baseline: fallback to static absolute threshold check
+			return value > fallbackThreshold
+		}
+		// Normal positive baseline surge evaluation
 		threshold := *rollingAvg * deviationMultiplier
 		return value > threshold
 	}

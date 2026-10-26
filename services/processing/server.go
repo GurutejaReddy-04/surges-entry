@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"math"
 	"sync"
@@ -33,7 +36,16 @@ type EventProcessor struct {
 	logger             *slog.Logger
 	alertQueue         chan *alertTask
 	stopWorkers        chan struct{}
+	stopOnce           sync.Once
 	workerWg           sync.WaitGroup
+}
+
+func generateFallbackTraceID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%032x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 func NewEventProcessor(
@@ -68,11 +80,16 @@ func (s *EventProcessor) startAlertWorkers(numWorkers int) {
 			for {
 				select {
 				case <-s.stopWorkers:
-					return
-				case task, ok := <-s.alertQueue:
-					if !ok {
-						return
+					// Drain any remaining buffered tasks before exiting
+					for {
+						select {
+						case task := <-s.alertQueue:
+							s.dispatchAlert(task)
+						default:
+							return
+						}
 					}
+				case task := <-s.alertQueue:
 					s.dispatchAlert(task)
 				}
 			}
@@ -105,8 +122,10 @@ func (s *EventProcessor) dispatchAlert(task *alertTask) {
 }
 
 func (s *EventProcessor) Stop() {
-	close(s.stopWorkers)
-	s.workerWg.Wait()
+	s.stopOnce.Do(func() {
+		close(s.stopWorkers)
+		s.workerWg.Wait()
+	})
 }
 
 func (s *EventProcessor) ProcessEvent(ctx context.Context, req *eventpb.Event) (*eventpb.ProcessResponse, error) {
@@ -131,6 +150,9 @@ func (s *EventProcessor) ProcessEvent(ctx context.Context, req *eventpb.Event) (
 			req.TraceId = otelTraceID
 		}
 	}
+	if req.TraceId == "" {
+		req.TraceId = generateFallbackTraceID()
+	}
 
 	// 1. Hot-state cache: Read rolling average BEFORE persistence.
 	// Never mutates Redis state prior to DB confirmation, preventing dual-write duplication on retries.
@@ -140,22 +162,31 @@ func (s *EventProcessor) ProcessEvent(ctx context.Context, req *eventpb.Event) (
 	// 2. Anomaly detection: Two-tier evaluation against pre-existing window
 	isAnomaly := DetermineAnomaly(req.Value, rollingAvg, s.config.DeviationMultiplier, s.config.FallbackThreshold)
 
-	// 3. PostgreSQL persistence: Durable audit record with retry
-	record := &ProcessedEventRecord{
-		UserID:     req.UserId,
-		EventType:  req.EventType,
-		EventValue: req.Value,
-		RollingAvg: rollingAvg,
-		IsAnomaly:  isAnomaly,
-		TraceID:    req.TraceId,
+	// 3. PostgreSQL persistence: Durable audit record with retry and idempotency
+	var eventTime time.Time
+	if req.Timestamp > 0 {
+		eventTime = time.Unix(req.Timestamp, 0)
+	} else {
+		eventTime = time.Now()
 	}
 
+	record := &ProcessedEventRecord{
+		UserID:         req.UserId,
+		EventType:      req.EventType,
+		EventValue:     req.Value,
+		RollingAvg:     rollingAvg,
+		IsAnomaly:      isAnomaly,
+		TraceID:        req.TraceId,
+		EventTimestamp: eventTime,
+	}
+
+	var inserted bool
 	var dbErr error
 	backoff := 50 * time.Millisecond
 	maxAttempts := 3
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		dbErr = s.repo.SaveProcessedEvent(ctx, record)
+		inserted, dbErr = s.repo.SaveProcessedEvent(ctx, record)
 		if dbErr == nil {
 			break
 		}
@@ -187,13 +218,36 @@ func (s *EventProcessor) ProcessEvent(ctx context.Context, req *eventpb.Event) (
 		return nil, status.Errorf(codes.Unavailable, "database persistence failed: %v", dbErr)
 	}
 
-	// 4. Redis Hot State Commit: Executed ONLY after successful database write.
-	// Normal values are committed to the window. Anomalies only refresh TTL to avoid polluting future baselines.
-	if commitErr := s.hotState.CommitEvent(ctx, req.UserId, req.Value, isAnomaly, req.TraceId); commitErr != nil {
-		s.logger.WarnContext(ctx, "failed to commit event to redis hot state window (audit record safely in postgres)",
+	// 4. Redis Hot State Commit: Executed ONLY after successful database write and ONLY if inserted (prevents replay contamination)
+	if inserted {
+		var commitErr error
+		commitBackoff := 50 * time.Millisecond
+		for attempt := 1; attempt <= 3; attempt++ {
+			commitErr = s.hotState.CommitEvent(ctx, req.UserId, req.Value, isAnomaly, req.TraceId)
+			if commitErr == nil {
+				break
+			}
+			if attempt < 3 {
+				select {
+				case <-ctx.Done():
+					break
+				case <-time.After(commitBackoff):
+					commitBackoff *= 2
+				}
+			}
+		}
+
+		if commitErr != nil {
+			s.logger.WarnContext(ctx, "failed to commit event to redis hot state window after retries (audit record safely in postgres)",
+				"user_id", req.UserId,
+				"trace_id", req.TraceId,
+				"error", commitErr,
+			)
+		}
+	} else {
+		s.logger.InfoContext(ctx, "skipping redis hot state commit for duplicate replayed event",
 			"user_id", req.UserId,
 			"trace_id", req.TraceId,
-			"error", commitErr,
 		)
 	}
 
