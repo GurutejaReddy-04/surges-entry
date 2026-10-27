@@ -41,7 +41,7 @@ From the codebase architecture and scripts, the historical baseline was gathered
 ### Infrastructure Configuration
 * **Apache Kafka (KRaft mode)**: Confluent Platform `cp-kafka:7.7.0`, 1 broker, 6 partitions, `acks=all`, `min.insync.replicas=1`, `auto.create.topics=true`.
 * **Redis**: `redis:7-alpine`, single instance, standard in-memory storage, TCP port 6379.
-* **PostgreSQL**: `postgres:16-alpine`, connection pool `pgxpool` configured in Go (max 20 connections, 5-second connection timeout).
+* **PostgreSQL**: `postgres:16-alpine`, connection pool `pgxpool` configured in Go (max 15 connections, 3-second connection timeout).
 * **Microservices**: Go 1.22 (`CGO_ENABLED=0`, Alpine 3.20 base image), single replica per service.
 
 ---

@@ -80,7 +80,7 @@ type EventProcessor struct {
       p.logger.Warn("alert queue full; dropping alert to protect throughput")
   }
   ```
-* **Dedicated Worker Goroutines**: 2 worker goroutines drain `alertQueue` and issue gRPC `SendAlert` RPCs.
+* **Dedicated Worker Goroutines**: 4 worker goroutines drain `alertQueue` and issue gRPC `SendAlert` RPCs.
 * **Latency Isolation**: If the Notification Service slows down or restarts, primary event processing latency remains unaffected.
 
 ---

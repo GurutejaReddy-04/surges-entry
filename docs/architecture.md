@@ -66,7 +66,7 @@ flowchart TD
     * **Tier 1 (Dynamic)**: Evaluates `value > 1.5 × rolling_avg`.
     * **Tier 2 (Static Fallback)**: If Redis is unavailable or on cold-start (empty window), falls back to `value > 1000.0`.
   * **PostgreSQL Audit Store**: Persists records with computed rolling averages, anomaly flags, and 32-hex `trace_id`.
-  * **Decoupled Alert Dispatch**: Routes anomaly alerts through a bounded in-memory worker queue (buffer size 1000, 2 concurrent workers) so slow notification RPCs never block the core processing path.
+  * **Decoupled Alert Dispatch**: Routes anomaly alerts through a bounded in-memory worker queue (buffer size 1000, 4 concurrent workers) so slow notification RPCs never block the core processing path.
 
 ### 2.3 Notification Service (`services/notification/`)
 * **Role**: Receives anomaly alerts over gRPC and emits structured JSON alert logs.
