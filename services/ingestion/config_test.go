@@ -12,8 +12,8 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.KafkaTopic != "events" {
 		t.Errorf("expected default topic events, got %s", cfg.KafkaTopic)
 	}
-	if cfg.ConsumerGroupID != "ingestion-service-group" {
-		t.Errorf("expected default group ingestion-service-group, got %s", cfg.ConsumerGroupID)
+	if cfg.ConsumerGroupID != "surges-entry-ingestion-group" {
+		t.Errorf("expected default group surges-entry-ingestion-group, got %s", cfg.ConsumerGroupID)
 	}
 	if cfg.ProcessingTarget != "localhost:50051" {
 		t.Errorf("expected default target localhost:50051, got %s", cfg.ProcessingTarget)

@@ -63,14 +63,38 @@ func TestRunConsumerLoops(t *testing.T) {
 	cg.errChan <- errors.New("sample error")
 
 	handler := NewIngestionHandler(&mockProcessingClient{}, testLogger(), time.Second)
-	runConsumerLoops(ctx, cg, "events", handler, testLogger())
+	wg := runConsumerLoops(ctx, cg, "events", handler, testLogger())
 
 	time.Sleep(50 * time.Millisecond)
 	cancel()
-	time.Sleep(50 * time.Millisecond)
+	wg.Wait()
 
 	if cg.consumeCount == 0 {
 		t.Errorf("expected consume to be called at least once")
+	}
+}
+
+func TestNewHealthServer_WithLivenessCheck(t *testing.T) {
+	isLive := false
+	srv := newHealthServer("8080", func() bool { return isLive })
+	if srv == nil {
+		t.Fatal("expected non-nil server")
+	}
+
+	// 1. Should return 503 when unhealthy
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected status 503 when isLive is false, got %d", rec.Code)
+	}
+
+	// 2. Should return 200 when healthy
+	isLive = true
+	rec2 := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Errorf("expected status 200 when isLive is true, got %d", rec2.Code)
 	}
 }
 

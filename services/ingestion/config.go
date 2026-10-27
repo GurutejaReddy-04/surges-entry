@@ -31,7 +31,7 @@ func LoadConfig() Config {
 	return Config{
 		KafkaBrokers:     brokers,
 		KafkaTopic:       getEnv("KAFKA_TOPIC", "events"),
-		ConsumerGroupID:  getEnv("KAFKA_CONSUMER_GROUP", "ingestion-service-group"),
+		ConsumerGroupID:  getEnv("KAFKA_CONSUMER_GROUP", "surges-entry-ingestion-group"),
 		ProcessingTarget: getEnv("PROCESSING_ADDR", "localhost:50051"),
 		GRPCTimeout:      5 * time.Second,
 	}
