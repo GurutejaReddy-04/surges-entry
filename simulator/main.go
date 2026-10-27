@@ -34,8 +34,9 @@ type Config struct {
 }
 
 func loadConfig() Config {
+	broker := envOr("KAFKA_BROKER", envOr("KAFKA_BROKERS", "localhost:9092"))
 	return Config{
-		KafkaBroker: envOr("KAFKA_BROKER", "localhost:9092"),
+		KafkaBroker: broker,
 		EventRate:   envIntOr("EVENT_RATE", 5),
 		NumUsers:    envIntOr("NUM_USERS", 10),
 	}
@@ -97,6 +98,12 @@ func newProducer(broker string) (sarama.SyncProducer, error) {
 }
 
 func run(ctx context.Context, cfg Config, producer sarama.SyncProducer, log *slog.Logger) error {
+	if cfg.NumUsers <= 0 {
+		cfg.NumUsers = 1
+	}
+	if cfg.EventRate <= 0 {
+		cfg.EventRate = 1
+	}
 	pool := buildUserPool(cfg.NumUsers)
 	tick := time.NewTicker(time.Second / time.Duration(cfg.EventRate))
 	defer tick.Stop()
