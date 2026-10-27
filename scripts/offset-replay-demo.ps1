@@ -54,7 +54,7 @@ function Query-DBCount() {
 function Publish-KafkaEvent([string]$userID, [string]$eventType, [double]$val, [string]$traceID) {
     $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $json = "{`"user_id`":`"$userID`",`"event_type`":`"$eventType`",`"value`":$val,`"timestamp`":$ts,`"trace_id`":`"$traceID`"}"
-    $json | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events 2>$null | Out-Null
+    "$userID`t$json" | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events --property parse.key=true 2>$null | Out-Null
 }
 
 Write-Host "============================================================" -ForegroundColor Yellow
@@ -124,7 +124,8 @@ $resetOutput = docker exec kafka kafka-consumer-groups `
     --execute 2>&1
 
 Write-Host $resetOutput -ForegroundColor DarkGray
-Log-Pass "Consumer group offsets rewound to earliest position"
+docker exec redis redis-cli FLUSHDB 2>$null | Out-Null
+Log-Pass "Consumer group offsets rewound to earliest position and Redis hot-state cleared"
 
 # ── Step 5: Restart Consumer & Verify Reprocessing ───────────────────────────
 Log-Step "5/5" "Restarting Ingestion Service and observing historical replay..."

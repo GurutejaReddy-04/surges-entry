@@ -50,7 +50,7 @@ publish_event() {
     local ts
     ts=$(date +%s)
     local json="{\"user_id\":\"${user}\",\"event_type\":\"${type}\",\"value\":${val},\"timestamp\":${ts},\"trace_id\":\"${trace}\"}"
-    docker exec kafka bash -c "echo '${json}' | kafka-console-producer --bootstrap-server localhost:9092 --topic events" 2>/dev/null || true
+    docker exec kafka bash -c "printf '%s\t%s\n' '${user}' '${json}' | kafka-console-producer --bootstrap-server localhost:9092 --topic events --property parse.key=true" 2>/dev/null || true
 }
 
 echo -e "\033[1;33m============================================================\033[0m"

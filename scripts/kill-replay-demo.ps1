@@ -58,7 +58,7 @@ function Query-DBCount([string]$eventType = "") {
 function Publish-KafkaEvent([string]$userID, [string]$eventType, [double]$val, [string]$traceID) {
     $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $json = "{`"user_id`":`"$userID`",`"event_type`":`"$eventType`",`"value`":$val,`"timestamp`":$ts,`"trace_id`":`"$traceID`"}"
-    $json | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events 2>$null | Out-Null
+    "$userID`t$json" | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events --property parse.key=true 2>$null | Out-Null
 }
 
 Write-Host "============================================================" -ForegroundColor Yellow
