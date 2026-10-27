@@ -10,15 +10,44 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	eventpb "surges-entry/proto/gen/event"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
+
+const internalAuthHeader = "x-surges-internal-token"
+
+func authUnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	token := os.Getenv("INTERNAL_AUTH_TOKEN")
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Bypass health check probes so standard Kubernetes/Docker probes succeed
+		if strings.HasPrefix(info.FullMethod, "/grpc.health.v1.Health/") {
+			return handler(ctx, req)
+		}
+		if token == "" {
+			return handler(ctx, req) // Dev / test mode passthrough when unset
+		}
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "missing metadata")
+		}
+		vals := md.Get(internalAuthHeader)
+		if len(vals) == 0 || vals[0] != token {
+			return nil, status.Error(codes.PermissionDenied, "invalid inter-service auth token")
+		}
+		return handler(ctx, req)
+	}
+}
 
 func getEnv(key, fallback string) string {
 	if val := os.Getenv(key); val != "" {
@@ -53,6 +82,7 @@ func setupNotificationGRPCServer(port string, server *NotificationServer, health
 
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.UnaryInterceptor(authUnaryServerInterceptor()),
 	)
 
 	eventpb.RegisterNotificationServiceServer(grpcServer, server)
@@ -70,7 +100,11 @@ func run(ctx context.Context, port, healthPort string, logger *slog.Logger) erro
 	if err != nil {
 		logger.Warn("failed to initialize tracer provider; running without telemetry", "error", err)
 	} else {
-		defer shutdownTracer(context.Background())
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = shutdownTracer(shutdownCtx)
+		}()
 	}
 
 	server := NewNotificationServer(logger)
@@ -101,7 +135,9 @@ func run(ctx context.Context, port, healthPort string, logger *slog.Logger) erro
 		logger.Info("shutting down notification service gracefully")
 		healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 		healthServer.SetServingStatus(eventpb.NotificationService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-		_ = httpHealthServer.Shutdown(context.Background())
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = httpHealthServer.Shutdown(shutdownCtx)
+		shutdownCancel()
 		grpcServer.GracefulStop()
 		logger.Info("notification service stopped")
 		return nil
