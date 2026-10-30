@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -22,9 +25,10 @@ type ProcessingClient interface {
 }
 
 type IngestionHandler struct {
-	client  ProcessingClient
-	logger  *slog.Logger
-	timeout time.Duration
+	client    ProcessingClient
+	logger    *slog.Logger
+	timeout   time.Duration
+	onHealthy func()
 }
 
 func NewIngestionHandler(client ProcessingClient, logger *slog.Logger, timeout time.Duration) *IngestionHandler {
@@ -35,12 +39,23 @@ func NewIngestionHandler(client ProcessingClient, logger *slog.Logger, timeout t
 	}
 }
 
+// deterministicKafkaTraceID derives a stable 32-hex-char idempotency key from immutable
+// Kafka message coordinates so crash-replays and offset rewinds produce the exact same
+// key even when the upstream producer omits trace_id.
+func deterministicKafkaTraceID(msg *sarama.ConsumerMessage) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d", msg.Topic, msg.Partition, msg.Offset)))
+	return hex.EncodeToString(sum[:16])
+}
+
 func (h *IngestionHandler) Setup(session sarama.ConsumerGroupSession) error {
 	h.logger.Info("kafka consumer group session setup initiated",
 		"member_id", session.MemberID(),
 		"generation_id", session.GenerationID(),
 		"claims", session.Claims(),
 	)
+	if h.onHealthy != nil {
+		h.onHealthy()
+	}
 	return nil
 }
 
@@ -53,7 +68,8 @@ func (h *IngestionHandler) Cleanup(session sarama.ConsumerGroupSession) error {
 }
 
 func (h *IngestionHandler) ProcessSingleMessage(ctx context.Context, msg *sarama.ConsumerMessage) error {
-	event, err := ParseAndValidateEvent(msg.Value)
+	fallbackID := deterministicKafkaTraceID(msg)
+	event, err := ParseAndValidateEventWithFallback(msg.Value, fallbackID)
 	if err != nil {
 		h.logger.WarnContext(ctx, "failed to parse or validate event; discarding malformed message",
 			"partition", msg.Partition,
@@ -70,17 +86,16 @@ func (h *IngestionHandler) ProcessSingleMessage(ctx context.Context, msg *sarama
 		trace.WithAttributes(
 			attribute.String("user_id", event.UserId),
 			attribute.String("event_type", event.EventType),
+			attribute.String("event.idempotency_key", event.TraceId),
 			attribute.Int("partition", int(msg.Partition)),
 			attribute.Int64("offset", msg.Offset),
 		),
 	)
 	defer span.End()
 
-	// Correlate event trace_id with the OpenTelemetry span context
-	otelTraceID := span.SpanContext().TraceID().String()
-	if otelTraceID != "" && otelTraceID != "00000000000000000000000000000000" {
-		event.TraceId = otelTraceID
-	}
+	// Preserve deterministic event.TraceId across replays; never overwrite with an ephemeral
+	// per-attempt OTel span TraceID (which would bypass PostgreSQL ON CONFLICT deduplication).
+	// W3C traceparent headers still propagate the OTel span context over gRPC automatically.
 
 	// Retry logic with exponential backoff (3 attempts: 50ms, 100ms, 200ms) for transient gRPC forwarding failures
 	var forwardErr error
@@ -97,7 +112,9 @@ func (h *IngestionHandler) ProcessSingleMessage(ctx context.Context, msg *sarama
 			break
 		}
 
-		if forwardErr == nil && resp != nil && !resp.Success {
+		if forwardErr == nil && resp == nil {
+			forwardErr = errors.New("processing service returned nil response")
+		} else if forwardErr == nil && !resp.Success {
 			forwardErr = fmt.Errorf("processing service rejected event: %s", resp.Message)
 		}
 
@@ -127,10 +144,12 @@ func (h *IngestionHandler) ProcessSingleMessage(ctx context.Context, msg *sarama
 		)
 
 		if attempt < maxAttempts {
+			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return fmt.Errorf("context canceled during retry: %w", ctx.Err())
-			case <-time.After(backoff):
+			case <-timer.C:
 				backoff *= 2
 			}
 		}
@@ -155,6 +174,10 @@ func (h *IngestionHandler) ProcessSingleMessage(ctx context.Context, msg *sarama
 
 func (h *IngestionHandler) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for {
+		if session.Context().Err() != nil {
+			return nil
+		}
+
 		select {
 		case msg, ok := <-claim.Messages():
 			if !ok {

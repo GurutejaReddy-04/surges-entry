@@ -12,6 +12,8 @@ import (
 	eventpb "surges-entry/proto/gen/event"
 
 	"github.com/IBM/sarama"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -255,9 +257,7 @@ func TestSetupAndCleanup(t *testing.T) {
 }
 
 func TestProcessSingleMessage_RetrySuccess(t *testing.T) {
-	var attempts int
-	mockClient := &mockProcessingClient{}
-	handler := NewIngestionHandler(mockClient, testLogger(), time.Second)
+	handler := NewIngestionHandler(nil, testLogger(), time.Second)
 
 	// Override ProcessEvent to fail first attempt, succeed on second
 	customClient := &retryMockClient{
@@ -278,7 +278,6 @@ func TestProcessSingleMessage_RetrySuccess(t *testing.T) {
 	if customClient.totalCalls != 2 {
 		t.Errorf("expected 2 calls, got %d", customClient.totalCalls)
 	}
-	_ = attempts
 }
 
 type retryMockClient struct {
@@ -360,5 +359,90 @@ func TestConsumeClaim_FailureHaltsPartitionWithoutMarking(t *testing.T) {
 	// CRITICAL: Message MUST NOT be marked as committed!
 	if len(sess.markedMsgs) != 0 {
 		t.Errorf("critical bug: failed message was marked as committed! got %d marked messages", len(sess.markedMsgs))
+	}
+}
+
+func TestReplayDeterminism_PreservesTraceIDUnderActiveOTel(t *testing.T) {
+	prevTP := otel.GetTracerProvider()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	otel.SetTracerProvider(tp)
+	defer func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+	}()
+
+	mockClient := &mockProcessingClient{}
+	handler := NewIngestionHandler(mockClient, testLogger(), 2*time.Second)
+
+	t.Run("explicit producer trace_id is preserved across replays", func(t *testing.T) {
+		msg := &sarama.ConsumerMessage{
+			Topic:     "events",
+			Partition: 2,
+			Offset:    77,
+			Value:     []byte(`{"user_id":"u-1","event_type":"txn","value":100.0,"timestamp":1700000000,"trace_id":"producer-key-77"}`),
+		}
+
+		if err := handler.ProcessSingleMessage(context.Background(), msg); err != nil {
+			t.Fatalf("first delivery failed: %v", err)
+		}
+		if err := handler.ProcessSingleMessage(context.Background(), msg); err != nil {
+			t.Fatalf("replayed delivery failed: %v", err)
+		}
+
+		mockClient.mu.Lock()
+		defer mockClient.mu.Unlock()
+		if len(mockClient.calledEvents) < 2 {
+			t.Fatalf("expected 2 calls, got %d", len(mockClient.calledEvents))
+		}
+		first := mockClient.calledEvents[len(mockClient.calledEvents)-2].TraceId
+		second := mockClient.calledEvents[len(mockClient.calledEvents)-1].TraceId
+		if first != "producer-key-77" || second != "producer-key-77" {
+			t.Fatalf("expected producer-key-77 on both deliveries, got %q and %q", first, second)
+		}
+	})
+
+	t.Run("omitted trace_id derives deterministic kafka coordinate key across replays", func(t *testing.T) {
+		msg := &sarama.ConsumerMessage{
+			Topic:     "events",
+			Partition: 4,
+			Offset:    901,
+			Value:     []byte(`{"user_id":"u-2","event_type":"txn","value":55.0,"timestamp":1700000000}`),
+		}
+
+		if err := handler.ProcessSingleMessage(context.Background(), msg); err != nil {
+			t.Fatalf("first delivery failed: %v", err)
+		}
+		if err := handler.ProcessSingleMessage(context.Background(), msg); err != nil {
+			t.Fatalf("replayed delivery failed: %v", err)
+		}
+
+		mockClient.mu.Lock()
+		defer mockClient.mu.Unlock()
+		first := mockClient.calledEvents[len(mockClient.calledEvents)-2].TraceId
+		second := mockClient.calledEvents[len(mockClient.calledEvents)-1].TraceId
+		if first == "" || first != second {
+			t.Fatalf("expected identical non-empty deterministic trace_id on replay, got %q vs %q", first, second)
+		}
+	})
+}
+
+type nilRespProcessingClient struct{}
+
+func (n *nilRespProcessingClient) ProcessEvent(ctx context.Context, in *eventpb.Event, opts ...grpc.CallOption) (*eventpb.ProcessResponse, error) {
+	return nil, nil
+}
+
+func TestProcessSingleMessage_NilResponseDoesNotPanic(t *testing.T) {
+	handler := NewIngestionHandler(&nilRespProcessingClient{}, testLogger(), time.Second)
+	msg := &sarama.ConsumerMessage{
+		Topic:     "events",
+		Partition: 0,
+		Offset:    1,
+		Value:     []byte(`{"user_id":"u-nil","event_type":"txn","value":10.0,"timestamp":1700000000}`),
+	}
+
+	err := handler.ProcessSingleMessage(context.Background(), msg)
+	if err == nil {
+		t.Fatal("expected error when gRPC client returns (nil, nil), got nil")
 	}
 }

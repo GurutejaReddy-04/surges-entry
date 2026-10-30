@@ -47,6 +47,11 @@ func TestParseTimestamp(t *testing.T) {
 		t.Errorf("expected normalized seconds from ns, got %d", ts)
 	}
 
+	// Microseconds normalization
+	if ts := parseTimestamp(json.RawMessage(`1700000000123456`)); ts != 1700000000 {
+		t.Errorf("expected microsecond timestamp normalized to 1700000000, got %d", ts)
+	}
+
 	// RFC3339Nano
 	rfcTime := "2026-09-07T12:34:56.789Z"
 	parsed, _ := time.Parse(time.RFC3339Nano, rfcTime)

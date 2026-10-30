@@ -35,11 +35,18 @@ func parseTimestamp(raw json.RawMessage) int64 {
 		return time.Now().Unix()
 	}
 
-	str := strings.Trim(string(raw), "\"")
+	str := strings.TrimSpace(strings.Trim(string(raw), "\""))
+	if str == "" || str == "null" {
+		return time.Now().Unix()
+	}
+
 	if n, err := strconv.ParseInt(str, 10, 64); err == nil {
-		// If timestamp is in milliseconds or nanoseconds, normalize to seconds
+		// Normalize nanoseconds, microseconds, or milliseconds to Unix seconds
 		if n > 1e16 { // nanoseconds
 			return n / 1e9
+		}
+		if n > 1e14 { // microseconds
+			return n / 1e6
 		}
 		if n > 1e11 { // milliseconds
 			return n / 1e3
@@ -58,7 +65,17 @@ func parseTimestamp(raw json.RawMessage) int64 {
 	return time.Now().Unix()
 }
 
+// ParseAndValidateEvent parses and validates a JSON event payload, generating a
+// random fallback trace_id if the payload does not include one.
 func ParseAndValidateEvent(data []byte) (*eventpb.Event, error) {
+	return ParseAndValidateEventWithFallback(data, "")
+}
+
+// ParseAndValidateEventWithFallback parses and validates a JSON event payload.
+// When the payload omits trace_id, fallbackTraceID (if non-empty) is used so
+// Kafka consumers can supply a deterministic idempotency key derived from
+// (topic, partition, offset) that remains stable across replays.
+func ParseAndValidateEventWithFallback(data []byte, fallbackTraceID string) (*eventpb.Event, error) {
 	if len(data) == 0 {
 		return nil, errors.New("event payload is empty")
 	}
@@ -81,9 +98,13 @@ func ParseAndValidateEvent(data []byte) (*eventpb.Event, error) {
 		return nil, fmt.Errorf("event validation failed: value %v out of supported numeric range [-99999999.99, 99999999.99]", raw.Value)
 	}
 
-	traceID := raw.TraceID
-	if strings.TrimSpace(traceID) == "" {
-		traceID = generateTraceID()
+	traceID := strings.TrimSpace(raw.TraceID)
+	if traceID == "" {
+		if fb := strings.TrimSpace(fallbackTraceID); fb != "" {
+			traceID = fb
+		} else {
+			traceID = generateTraceID()
+		}
 	}
 
 	ts := parseTimestamp(raw.Timestamp)
