@@ -10,8 +10,12 @@ import (
 
 	eventpb "surges-entry/proto/gen/event"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestNewProcessingHealthServer_Serving(t *testing.T) {
@@ -106,6 +110,41 @@ func TestRun_EmptyPostgresDSN(t *testing.T) {
 	err := run(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err == nil {
 		t.Error("expected error from run with empty postgres dsn, got nil")
+	}
+}
+
+func TestAuthAndRecoveryInterceptors(t *testing.T) {
+	t.Setenv("INTERNAL_AUTH_TOKEN", "super-secret-token")
+	authInt := authUnaryServerInterceptor()
+
+	okHandler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return "ok", nil
+	}
+
+	if _, err := authInt(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/grpc.health.v1.Health/Check"}, okHandler); err != nil {
+		t.Fatalf("expected health check to bypass auth, got %v", err)
+	}
+
+	if _, err := authInt(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/event.ProcessingService/ProcessEvent"}, okHandler); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("expected Unauthenticated, got %v", err)
+	}
+
+	badCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(internalAuthHeader, "wrong"))
+	if _, err := authInt(badCtx, nil, &grpc.UnaryServerInfo{FullMethod: "/event.ProcessingService/ProcessEvent"}, okHandler); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied, got %v", err)
+	}
+
+	goodCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(internalAuthHeader, "super-secret-token"))
+	if _, err := authInt(goodCtx, nil, &grpc.UnaryServerInfo{FullMethod: "/event.ProcessingService/ProcessEvent"}, okHandler); err != nil {
+		t.Fatalf("expected valid token to pass, got %v", err)
+	}
+
+	recInt := recoveryUnaryServerInterceptor(testLogger())
+	_, err := recInt(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/event.ProcessingService/ProcessEvent"}, func(ctx context.Context, req interface{}) (interface{}, error) {
+		panic("boom")
+	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal on recovered panic, got %v", err)
 	}
 }
 

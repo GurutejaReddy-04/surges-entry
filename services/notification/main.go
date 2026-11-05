@@ -4,21 +4,73 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
+	"strings"
 	"syscall"
+	"time"
 
 	eventpb "surges-entry/proto/gen/event"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
+
+const (
+	internalAuthHeader  = "x-surges-internal-token"
+	grpcShutdownTimeout = 10 * time.Second
+)
+
+func authUnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	token := os.Getenv("INTERNAL_AUTH_TOKEN")
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Bypass health check probes so standard Kubernetes/Docker probes succeed
+		if strings.HasPrefix(info.FullMethod, "/grpc.health.v1.Health/") {
+			return handler(ctx, req)
+		}
+		if token == "" {
+			return handler(ctx, req) // Dev / test mode passthrough when unset
+		}
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "missing metadata")
+		}
+		vals := md.Get(internalAuthHeader)
+		if len(vals) == 0 || subtle.ConstantTimeCompare([]byte(vals[0]), []byte(token)) != 1 {
+			return nil, status.Error(codes.PermissionDenied, "invalid inter-service auth token")
+		}
+		return handler(ctx, req)
+	}
+}
+
+func recoveryUnaryServerInterceptor(logger *slog.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				if logger != nil {
+					logger.ErrorContext(ctx, "recovered panic in gRPC handler",
+						"method", info.FullMethod,
+						"panic", fmt.Sprint(r),
+						"stack", string(debug.Stack()),
+					)
+				}
+				err = status.Error(codes.Internal, "internal server error")
+			}
+		}()
+		return handler(ctx, req)
+	}
+}
 
 func getEnv(key, fallback string) string {
 	if val := os.Getenv(key); val != "" {
@@ -41,7 +93,14 @@ func newNotificationHealthServer(port string, healthServer *health.Server) *http
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	return &http.Server{Addr: ":" + port, Handler: healthMux}
+	return &http.Server{
+		Addr:              ":" + port,
+		Handler:           healthMux,
+		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
 }
 
 func setupNotificationGRPCServer(port string, server *NotificationServer, healthServer *health.Server) (*grpc.Server, net.Listener, error) {
@@ -51,8 +110,17 @@ func setupNotificationGRPCServer(port string, server *NotificationServer, health
 		return nil, nil, fmt.Errorf("failed to listen on tcp port %s: %w", port, err)
 	}
 
+	var logger *slog.Logger
+	if server != nil {
+		logger = server.logger
+	}
+
 	grpcServer := grpc.NewServer(
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(
+			recoveryUnaryServerInterceptor(logger),
+			authUnaryServerInterceptor(),
+		),
 	)
 
 	eventpb.RegisterNotificationServiceServer(grpcServer, server)
@@ -64,13 +132,38 @@ func setupNotificationGRPCServer(port string, server *NotificationServer, health
 	return grpcServer, listener, nil
 }
 
+func gracefulStopGRPC(grpcServer *grpc.Server, timeout time.Duration, logger *slog.Logger) {
+	done := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(done)
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+	case <-timer.C:
+		if logger != nil {
+			logger.Warn("gRPC graceful stop timed out; forcing immediate stop", "timeout", timeout.String())
+		}
+		grpcServer.Stop()
+		<-done
+	}
+}
+
 func run(ctx context.Context, port, healthPort string, logger *slog.Logger) error {
 	// Initialize OpenTelemetry TracerProvider
 	shutdownTracer, err := InitTelemetry(ctx, "notification-service", logger)
 	if err != nil {
 		logger.Warn("failed to initialize tracer provider; running without telemetry", "error", err)
 	} else {
-		defer shutdownTracer(context.Background())
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = shutdownTracer(shutdownCtx)
+		}()
 	}
 
 	server := NewNotificationServer(logger)
@@ -87,6 +180,11 @@ func run(ctx context.Context, port, healthPort string, logger *slog.Logger) erro
 			logger.Error("http health check server error", "error", err)
 		}
 	}()
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = httpHealthServer.Shutdown(shutdownCtx)
+	}()
 
 	serverErr := make(chan error, 1)
 	go func() {
@@ -101,11 +199,12 @@ func run(ctx context.Context, port, healthPort string, logger *slog.Logger) erro
 		logger.Info("shutting down notification service gracefully")
 		healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 		healthServer.SetServingStatus(eventpb.NotificationService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-		_ = httpHealthServer.Shutdown(context.Background())
-		grpcServer.GracefulStop()
+		gracefulStopGRPC(grpcServer, grpcShutdownTimeout, logger)
 		logger.Info("notification service stopped")
 		return nil
 	case err := <-serverErr:
+		healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+		healthServer.SetServingStatus(eventpb.NotificationService_ServiceDesc.ServiceName, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 		return fmt.Errorf("notification server runtime error: %w", err)
 	}
 }

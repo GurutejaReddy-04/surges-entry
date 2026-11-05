@@ -11,8 +11,12 @@ import (
 
 	eventpb "surges-entry/proto/gen/event"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestGetEnv(t *testing.T) {
@@ -100,5 +104,36 @@ func TestRunNotificationServer_GracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for notification server to shut down")
+	}
+}
+
+func TestNotificationAuthAndRecoveryInterceptors(t *testing.T) {
+	t.Setenv("INTERNAL_AUTH_TOKEN", "notif-secret")
+	authInt := authUnaryServerInterceptor()
+
+	okHandler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return "ok", nil
+	}
+
+	if _, err := authInt(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/event.NotificationService/SendAlert"}, okHandler); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("expected Unauthenticated, got %v", err)
+	}
+
+	badCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(internalAuthHeader, "wrong"))
+	if _, err := authInt(badCtx, nil, &grpc.UnaryServerInfo{FullMethod: "/event.NotificationService/SendAlert"}, okHandler); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied, got %v", err)
+	}
+
+	goodCtx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(internalAuthHeader, "notif-secret"))
+	if _, err := authInt(goodCtx, nil, &grpc.UnaryServerInfo{FullMethod: "/event.NotificationService/SendAlert"}, okHandler); err != nil {
+		t.Fatalf("expected valid token to pass, got %v", err)
+	}
+
+	recInt := recoveryUnaryServerInterceptor(slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	_, err := recInt(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/event.NotificationService/SendAlert"}, func(ctx context.Context, req interface{}) (interface{}, error) {
+		panic("unexpected crash")
+	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("expected codes.Internal on recovered panic, got %v", err)
 	}
 }
