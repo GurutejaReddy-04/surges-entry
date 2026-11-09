@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	eventpb "surges-entry/proto/gen/event"
 
@@ -26,21 +27,22 @@ func (s *NotificationServer) SendAlert(ctx context.Context, req *eventpb.AlertRe
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "empty alert request")
 	}
-	if req.UserId == "" {
+	if strings.TrimSpace(req.UserId) == "" {
 		return nil, status.Error(codes.InvalidArgument, "user_id cannot be empty")
 	}
 
-	// Extract OpenTelemetry trace ID from the incoming gRPC context (injected by client interceptor)
+	// Extract OpenTelemetry trace ID from incoming gRPC context without overwriting
+	// the event's correlation/idempotency trace_id.
+	var otelTraceID string
 	span := trace.SpanFromContext(ctx)
 	if span.SpanContext().IsValid() {
-		otelTraceID := span.SpanContext().TraceID().String()
-		if otelTraceID != "" && otelTraceID != "00000000000000000000000000000000" {
-			req.TraceId = otelTraceID
+		tid := span.SpanContext().TraceID().String()
+		if tid != "" && tid != "00000000000000000000000000000000" {
+			otelTraceID = tid
 		}
 	}
 
-	// In production, outbound notification integrations (PagerDuty, Slack, Webhooks) dispatch asynchronously via retry queues.
-	s.logger.InfoContext(ctx, "🚨 ANOMALY_ALERT",
+	logAttrs := []any{
 		"alert", true,
 		"alert_type", "anomaly",
 		"user_id", req.UserId,
@@ -48,7 +50,13 @@ func (s *NotificationServer) SendAlert(ctx context.Context, req *eventpb.AlertRe
 		"value", req.EventValue,
 		"trace_id", req.TraceId,
 		"timestamp", req.Timestamp,
-	)
+	}
+	if otelTraceID != "" {
+		logAttrs = append(logAttrs, "otel_trace_id", otelTraceID)
+	}
+
+	// In production, outbound notification integrations (PagerDuty, Slack, Webhooks) dispatch asynchronously via retry queues.
+	s.logger.InfoContext(ctx, "ANOMALY_ALERT", logAttrs...)
 
 	return &eventpb.AlertResponse{
 		Success: true,

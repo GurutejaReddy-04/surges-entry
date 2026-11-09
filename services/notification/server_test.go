@@ -125,8 +125,30 @@ func TestSendAlert_OTelSpanExtraction(t *testing.T) {
 	if !resp.Success {
 		t.Error("expected success")
 	}
-	if req.TraceId != traceIDHex {
-		t.Errorf("expected trace id %s, got %s", traceIDHex, req.TraceId)
+	if req.TraceId != "original-trace" {
+		t.Errorf("expected trace_id to be preserved as original-trace, got %s", req.TraceId)
+	}
+
+	var logRecord map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &logRecord); err != nil {
+		t.Fatalf("failed to parse log output as json: %v, raw: %s", err, buf.String())
+	}
+	if logRecord["trace_id"] != "original-trace" {
+		t.Errorf("expected logged trace_id=original-trace, got %v", logRecord["trace_id"])
+	}
+	if logRecord["otel_trace_id"] != traceIDHex {
+		t.Errorf("expected logged otel_trace_id=%s, got %v", traceIDHex, logRecord["otel_trace_id"])
+	}
+}
+
+func TestSendAlert_RejectsWhitespaceUserID(t *testing.T) {
+	var buf bytes.Buffer
+	server := NewNotificationServer(slog.New(slog.NewJSONHandler(&buf, nil)))
+	_, err := server.SendAlert(context.Background(), &eventpb.AlertRequest{
+		UserId: "   ",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument for whitespace user_id, got %v", err)
 	}
 }
 
