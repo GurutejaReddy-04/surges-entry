@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -34,8 +35,9 @@ type Config struct {
 }
 
 func loadConfig() Config {
+	broker := envOr("KAFKA_BROKER", envOr("KAFKA_BROKERS", "localhost:9092"))
 	return Config{
-		KafkaBroker: envOr("KAFKA_BROKER", "localhost:9092"),
+		KafkaBroker: broker,
 		EventRate:   envIntOr("EVENT_RATE", 5),
 		NumUsers:    envIntOr("NUM_USERS", 10),
 	}
@@ -86,16 +88,36 @@ func generateEvent(pool []string) Event {
 	}
 }
 
+func parseBrokers(raw string) []string {
+	parts := strings.Split(raw, ",")
+	brokers := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			brokers = append(brokers, trimmed)
+		}
+	}
+	if len(brokers) == 0 {
+		return []string{"localhost:9092"}
+	}
+	return brokers
+}
+
 func newProducer(broker string) (sarama.SyncProducer, error) {
 	cfg := sarama.NewConfig()
 	cfg.Producer.Return.Successes = true
 	cfg.Producer.RequiredAcks = sarama.WaitForAll
 	cfg.Producer.Retry.Max = 3
 	cfg.Producer.Partitioner = sarama.NewHashPartitioner
-	return sarama.NewSyncProducer([]string{broker}, cfg)
+	return sarama.NewSyncProducer(parseBrokers(broker), cfg)
 }
 
 func run(ctx context.Context, cfg Config, producer sarama.SyncProducer, log *slog.Logger) error {
+	if cfg.NumUsers <= 0 {
+		cfg.NumUsers = 1
+	}
+	if cfg.EventRate <= 0 {
+		cfg.EventRate = 1
+	}
 	pool := buildUserPool(cfg.NumUsers)
 	tick := time.NewTicker(time.Second / time.Duration(cfg.EventRate))
 	defer tick.Stop()
@@ -126,9 +148,8 @@ func run(ctx context.Context, cfg Config, producer sarama.SyncProducer, log *slo
 				Topic: topic,
 				// Keying by userID: Kafka hashes this to a partition, guaranteeing all events
 				// for a given user land on the same partition in strict order. The Processing
-				// Service's count-based rolling window depends on this — without it,
-				// per-user windows mix events across partitions and the rolling average becomes
-				// non-deterministic.
+				// Service's count-based rolling window depends on this so per-user windows
+				// remain deterministic across partitions.
 				Key:   sarama.StringEncoder(ev.UserID),
 				Value: sarama.ByteEncoder(data),
 			}
