@@ -41,6 +41,12 @@ spec:
           env:
             - name: GRPC_PORT
               value: "50052"
+            - name: INTERNAL_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: INTERNAL_AUTH_TOKEN
+                  optional: true
           volumeMounts:
             - name: tmp-dir
               mountPath: /tmp

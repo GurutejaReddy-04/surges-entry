@@ -11,11 +11,18 @@ services:
     environment:
       GRPC_PORT: "50052"
       HEALTH_PORT: "8080"
+      INTERNAL_AUTH_TOKEN: "${INTERNAL_AUTH_TOKEN:-}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger:4317"
       OTEL_SERVICE_NAME: "notification-service"
     depends_on:
       jaeger:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     networks:
       - event-net
 
@@ -33,6 +40,7 @@ services:
       REDIS_ADDR: "redis:6379"
       POSTGRES_DSN: "postgres://${POSTGRES_USER:-eventplatform}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required. Copy .env.example to .env}@postgres:5432/${POSTGRES_DB:-eventplatform}?sslmode=disable"
       NOTIFICATION_GRPC_ADDR: "notification:50052"
+      INTERNAL_AUTH_TOKEN: "${INTERNAL_AUTH_TOKEN:-}"
       FALLBACK_THRESHOLD: "1000.0"
       DEVIATION_MULTIPLIER: "1.5"
       REDIS_WINDOW_SIZE: "10"
@@ -47,6 +55,12 @@ services:
         condition: service_healthy
       jaeger:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     networks:
       - event-net
 
@@ -61,6 +75,7 @@ services:
       KAFKA_TOPIC: "events"
       KAFKA_CONSUMER_GROUP: "surges-entry-ingestion-group"
       PROCESSING_ADDR: "processing:50051"
+      INTERNAL_AUTH_TOKEN: "${INTERNAL_AUTH_TOKEN:-}"
       HEALTH_PORT: "8080"
       OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger:4317"
       OTEL_SERVICE_NAME: "ingestion-service"
@@ -71,6 +86,12 @@ services:
         condition: service_healthy
       jaeger:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     networks:
       - event-net
 

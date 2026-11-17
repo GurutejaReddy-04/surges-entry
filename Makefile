@@ -16,12 +16,13 @@ test-all:
 	go test -v ./services/notification/...
 	go test -v ./services/processing/...
 	go test -v ./services/ingestion/...
+	go test -v ./simulator/...
 
 up:
-	docker-compose -f docker-compose.yml -f docker-compose.local.yml up -d
+	docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
 
 down:
-	docker-compose -f docker-compose.yml -f docker-compose.local.yml down
+	docker compose -f docker-compose.yml -f docker-compose.local.yml down
 
 ps:
-	docker-compose -f docker-compose.yml -f docker-compose.local.yml ps
+	docker compose -f docker-compose.yml -f docker-compose.local.yml ps

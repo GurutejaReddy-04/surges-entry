@@ -26,6 +26,7 @@ go.work.sum
 *.tmp
 *.temp
 *.bak
+.agents/
 
 # OS
 .DS_Store
