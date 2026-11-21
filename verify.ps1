@@ -15,7 +15,7 @@ function Step([string]$n, [string]$label) {
 function Pass([string]$msg) { Write-Host "  PASS  $msg" -ForegroundColor Green }
 function Fail([string]$msg) { $script:failed++; Write-Host "  FAIL  $msg" -ForegroundColor Red }
 
-# ── 1. Container health ──────────────────────────────────────────────────────
+# --- 1. Container health ---
 Step "1/4" "Container health"
 
 $containers = @(
@@ -38,7 +38,7 @@ foreach ($c in $containers) {
     }
 }
 
-# ── 2. Kafka CLI round-trip ──────────────────────────────────────────────────
+# --- 2. Kafka CLI round-trip ---
 Step "2/4" "Kafka CLI produce/consume"
 
 $marker = "verify-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -53,7 +53,7 @@ if ($consumed -match [regex]::Escape($marker)) {
     Fail "Message '$marker' not consumed back"
 }
 
-# ── 3. Simulator smoke test ──────────────────────────────────────────────────
+# --- 3. Simulator smoke test ---
 Step "3/4" "Simulator ($SimulatorSeconds seconds)"
 
 $outFile = Join-Path $PSScriptRoot "simulator_verify_out.txt"
@@ -88,7 +88,7 @@ if ($count -gt 0) {
     }
 }
 
-# ── 4. Partition affinity ────────────────────────────────────────────────────
+# --- 4. Partition affinity ---
 Step "4/4" "Partition affinity"
 
 $partitionMap = @{}
@@ -119,11 +119,11 @@ if ($violations -eq 0 -and $partitionMap.Count -gt 0) {
     Fail "No partition data to verify (no published events?)"
 }
 
-# ── Cleanup ──────────────────────────────────────────────────────────────────
+# --- Cleanup ---
 Remove-Item $outFile -ErrorAction SilentlyContinue
 Remove-Item $errFile -ErrorAction SilentlyContinue
 
-# ── Summary ──────────────────────────────────────────────────────────────────
+# --- Summary ---
 Write-Host "`n=== Stack Verification ===" -ForegroundColor Cyan
 if ($script:failed -eq 0) {
     Write-Host "All checks passed." -ForegroundColor Green

@@ -22,16 +22,16 @@ log_step() {
 }
 
 log_pass() {
-    echo -e "  \033[1;32m🚀 PASS: $1\033[0m"
+    echo -e "  \033[1;32m[PASS] $1\033[0m"
 }
 
 log_fail() {
-    echo -e "  \033[1;31m💀 FAIL: $1\033[0m"
+    echo -e "  \033[1;31m[FAIL] $1\033[0m"
     exit 1
 }
 
 query_db_count() {
-    local sql="SELECT COUNT(*) FROM processed_events WHERE user_id = '${USER}';"
+    local sql="SELECT COUNT(*) FROM processed_events WHERE user_id = '${TARGET_USER}';"
     docker exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -c "$sql" 2>/dev/null || echo "0"
 }
 
@@ -43,21 +43,20 @@ publish_event() {
     local ts
     ts=$(date +%s)
     local json="{\"user_id\":\"${user}\",\"event_type\":\"${type}\",\"value\":${val},\"timestamp\":${ts},\"trace_id\":\"${trace}\"}"
-    docker exec kafka bash -c "echo '${json}' | kafka-console-producer --bootstrap-server localhost:9092 --topic events" 2>/dev/null || true
+    docker exec kafka bash -c "printf '%s\t%s\n' '${user}' '${json}' | kafka-console-producer --bootstrap-server localhost:9092 --topic events --property parse.key=true" 2>/dev/null || true
 }
 
 echo -e "\033[1;33m============================================================\033[0m"
-echo -e "\033[1;33m  🚀 SurgesEntry: Kafka Offset Replay Demo                  \033[0m"
+echo -e "\033[1;33m  SurgesEntry: Kafka Offset Replay Demo\033[0m"
 echo -e "\033[1;33m============================================================\033[0m"
 
 RUN_ID="replaydemo-$(date +%s%N)"
-USER="replay-user-${RUN_ID}"
+TARGET_USER="replay-user-${RUN_ID}"
 
 log_step "1/5" "Checking deployment environment..."
 USE_K8S=false
 if kubectl -n "$NAMESPACE" get pods -l app=surges-entry-ingestion 2>/dev/null | grep -q "Running"; then
     USE_K8S=true
-    CONSUMER_GROUP="surges-entry-ingestion-group"
     log_pass "Targeting Kubernetes consumer group '$CONSUMER_GROUP'"
 else
     log_pass "Targeting Docker Compose consumer group '$CONSUMER_GROUP'"
@@ -67,7 +66,7 @@ log_step "2/5" "Publishing 5 distinct events for replay tracking..."
 for i in $(seq 1 5); do
     val=$((50 + i * 10))
     trace="${RUN_ID}-seed-${i}"
-    publish_event "$USER" "replay-seed" "$val" "$trace"
+    publish_event "$TARGET_USER" "replay-seed" "$val" "$trace"
     sleep 0.05
 done
 
@@ -103,7 +102,8 @@ docker exec kafka kafka-consumer-groups \
     --to-earliest \
     --execute
 
-log_pass "Consumer group offsets rewound to earliest position"
+docker exec redis redis-cli FLUSHDB >/dev/null 2>&1 || true
+log_pass "Consumer group offsets rewound to earliest position and Redis hot-state cleared"
 
 log_step "5/5" "Restarting Ingestion Service and observing historical replay..."
 if [ "$USE_K8S" = true ]; then
@@ -120,16 +120,16 @@ sleep 6
 replayed_count=$(query_db_count)
 echo ""
 echo -e "\033[1;33m============================================================\033[0m"
-echo -e "\033[1;33m  REPLAY DEMO METRICS & VERIFICATION SUMMARY                \033[0m"
+echo -e "\033[1;33m  REPLAY DEMO METRICS & VERIFICATION SUMMARY\033[0m"
 echo -e "\033[1;33m============================================================\033[0m"
 echo "  Initial rows in PostgreSQL : ${initial_count}"
 echo "  Rows after offset replay   : ${replayed_count}"
 echo "  Reprocessed events logged  : $((replayed_count - initial_count))"
 
 if [ "$replayed_count" -gt "$initial_count" ]; then
-    echo -e "\n\033[1;32m🚀 PASS: HISTORICAL REPLAY PROVED! Events successfully re-read from Kafka log and reprocessed.\033[0m\n"
+    echo -e "\n\033[1;32m[PASS] HISTORICAL REPLAY PROVED! Events successfully re-read from Kafka log and reprocessed.\033[0m\n"
     exit 0
 else
-    echo -e "\n\033[1;33m⚠️ NOTE: Ingestion service resumed without duplicate inserts (idempotency or stream already at high-water mark).\033[0m\n"
+    echo -e "\n\033[1;33m[NOTE] Ingestion service resumed without duplicate inserts (idempotent replay preserved existing audit rows).\033[0m\n"
     exit 0
 fi

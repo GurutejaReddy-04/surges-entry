@@ -1,4 +1,4 @@
-# SurgesEntry — Kafka Consumer Group Offset Replay Demo
+﻿# SurgesEntry — Kafka Consumer Group Offset Replay Demo
 # Proves Kafka's capability to reprocess historical event streams on demand.
 
 param(
@@ -31,11 +31,11 @@ function Log-Step([string]$step, [string]$msg) {
 }
 
 function Log-Pass([string]$msg) {
-    Write-Host "  🚀 PASS: $msg" -ForegroundColor Green
+    Write-Host "  [PASS] $msg" -ForegroundColor Green
 }
 
 function Log-Fail([string]$msg) {
-    Write-Host "  💀 FAIL: $msg" -ForegroundColor Red
+    Write-Host "  [FAIL] $msg" -ForegroundColor Red
     exit 1
 }
 
@@ -54,14 +54,14 @@ function Query-DBCount() {
 function Publish-KafkaEvent([string]$userID, [string]$eventType, [double]$val, [string]$traceID) {
     $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $json = "{`"user_id`":`"$userID`",`"event_type`":`"$eventType`",`"value`":$val,`"timestamp`":$ts,`"trace_id`":`"$traceID`"}"
-    $json | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events 2>$null | Out-Null
+    "$userID`t$json" | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events --property parse.key=true 2>$null | Out-Null
 }
 
 Write-Host "============================================================" -ForegroundColor Yellow
-Write-Host "  🚀 SurgesEntry: Kafka Offset Replay Demo                  " -ForegroundColor Yellow
+Write-Host "  SurgesEntry: Kafka Offset Replay Demo" -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Yellow
 
-# ── Step 1: Detect Environment ───────────────────────────────────────────────
+# --- Step 1: Detect Environment ---
 Log-Step "1/5" "Checking deployment environment..."
 $useK8s = $false
 $podCheck = kubectl -n $Namespace get pods -l app=surges-entry-ingestion -o jsonpath='{.items[0].status.phase}' 2>$null
@@ -73,7 +73,7 @@ if ($podCheck -eq "Running") {
     Log-Pass "Targeting Docker Compose consumer group '$ConsumerGroup'"
 }
 
-# ── Step 2: Publish Seed Events ──────────────────────────────────────────────
+# --- Step 2: Publish Seed Events ---
 Log-Step "2/5" "Publishing 5 seed events to Kafka for replay testing..."
 
 for ($i = 1; $i -le 5; $i++) {
@@ -99,7 +99,7 @@ if ($initialCount -ge 5) {
     Log-Fail "Initial batch failed to process (only $initialCount in DB)"
 }
 
-# ── Step 3: Stop Consumer Group To Allow Offset Reset ────────────────────────
+# --- Step 3: Stop Consumer Group To Allow Offset Reset ---
 Log-Step "3/5" "Pausing Ingestion Service (Kafka requires inactive consumer group to alter offsets)..."
 
 if ($useK8s) {
@@ -112,7 +112,7 @@ if ($useK8s) {
 }
 Log-Pass "Consumer group is now inactive and ready for offset manipulation"
 
-# ── Step 4: Reset Kafka Consumer Group Offsets to Earliest ───────────────────
+# --- Step 4: Reset Kafka Consumer Group Offsets to Earliest ---
 Log-Step "4/5" "Rewinding Kafka offsets to --to-earliest for topic 'events'..."
 
 $resetOutput = docker exec kafka kafka-consumer-groups `
@@ -124,9 +124,10 @@ $resetOutput = docker exec kafka kafka-consumer-groups `
     --execute 2>&1
 
 Write-Host $resetOutput -ForegroundColor DarkGray
-Log-Pass "Consumer group offsets rewound to earliest position"
+docker exec redis redis-cli FLUSHDB 2>$null | Out-Null
+Log-Pass "Consumer group offsets rewound to earliest position and Redis hot-state cleared"
 
-# ── Step 5: Restart Consumer & Verify Reprocessing ───────────────────────────
+# --- Step 5: Restart Consumer & Verify Reprocessing ---
 Log-Step "5/5" "Restarting Ingestion Service and observing historical replay..."
 
 if ($useK8s) {
@@ -151,9 +152,9 @@ Write-Host "  Rows after offset replay   : $replayedCount" -ForegroundColor Whit
 Write-Host "  Reprocessed events logged  : $($replayedCount - $initialCount)" -ForegroundColor White
 
 if ($replayedCount -gt $initialCount) {
-    Write-Host "`n  🚀 PASS: HISTORICAL REPLAY PROVED! Events successfully re-read from Kafka log and reprocessed.`n" -ForegroundColor Green
+    Write-Host "`n  [PASS] HISTORICAL REPLAY PROVED! Events successfully re-read from Kafka log and reprocessed.`n" -ForegroundColor Green
     exit 0
 } else {
-    Write-Host "`n  ⚠️ NOTE: Ingestion service resumed without duplicate inserts (idempotency or stream already at high-water mark)." -ForegroundColor DarkYellow
+    Write-Host "`n  [NOTE] Ingestion service resumed without duplicate inserts (idempotent replay preserved existing audit rows)." -ForegroundColor DarkYellow
     exit 0
 }

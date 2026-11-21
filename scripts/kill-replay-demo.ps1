@@ -1,4 +1,4 @@
-# SurgesEntry — Consumer Kill & Replay Resilience Demo
+﻿# SurgesEntry — Consumer Kill & Replay Resilience Demo
 # Proves Kafka's durable partition log and consumer offset resumption.
 # We kill the Ingestion Service pod mid-stream and verify crash recovery.
 
@@ -31,11 +31,11 @@ function Log-Step([string]$step, [string]$msg) {
 }
 
 function Log-Pass([string]$msg) {
-    Write-Host "  🚀 PASS: $msg" -ForegroundColor Green
+    Write-Host "  [PASS] $msg" -ForegroundColor Green
 }
 
 function Log-Fail([string]$msg) {
-    Write-Host "  💀 FAIL: $msg" -ForegroundColor Red
+    Write-Host "  [FAIL] $msg" -ForegroundColor Red
     exit 1
 }
 
@@ -58,11 +58,11 @@ function Query-DBCount([string]$eventType = "") {
 function Publish-KafkaEvent([string]$userID, [string]$eventType, [double]$val, [string]$traceID) {
     $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $json = "{`"user_id`":`"$userID`",`"event_type`":`"$eventType`",`"value`":$val,`"timestamp`":$ts,`"trace_id`":`"$traceID`"}"
-    $json | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events 2>$null | Out-Null
+    "$userID`t$json" | docker exec -i kafka kafka-console-producer --bootstrap-server kafka:29092 --topic events --property parse.key=true 2>$null | Out-Null
 }
 
 Write-Host "============================================================" -ForegroundColor Yellow
-Write-Host "  🚀 SurgesEntry: Consumer Kill & Replay Resilience Demo   " -ForegroundColor Yellow
+Write-Host "  SurgesEntry: Consumer Kill & Replay Resilience Demo" -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Yellow
 
 # Validates fault-tolerance and consumer recovery under abrupt process termination.
@@ -93,7 +93,7 @@ if ($k8sPods -and $k8sPods.Trim() -ne "") {
     }
 }
 
-# ── Step 2: Publish Baseline Events ──────────────────────────────────────────
+# --- Step 2: Publish Baseline Events ---
 Log-Step "2/6" "Publishing 10 baseline events to Kafka topic 'events'..."
 
 for ($i = 1; $i -le 10; $i++) {
@@ -105,7 +105,7 @@ for ($i = 1; $i -le 10; $i++) {
 
 Log-Pass "10 baseline events published"
 
-# ── Step 3: Verify Baseline Events in PostgreSQL ─────────────────────────────
+# --- Step 3: Verify Baseline Events in PostgreSQL ---
 Log-Step "3/6" "Verifying baseline events are processed and saved in PostgreSQL..."
 
 $retries = 15
@@ -123,8 +123,8 @@ if ($count1 -ge 10) {
     Log-Fail "Expected 10 events in PostgreSQL, found $count1"
 }
 
-# ── Step 4: Kill the Ingestion Consumer Mid-Stream ───────────────────────────
-Log-Step "4/6" "💀 KILLING INGESTION SERVICE MID-STREAM..."
+# --- Step 4: Kill the Ingestion Consumer Mid-Stream ---
+Log-Step "4/6" "KILLING INGESTION SERVICE MID-STREAM..."
 
 if ($useK8s) {
     $victimPod = (kubectl -n $Namespace get pods -l app=surges-entry-ingestion -o jsonpath='{.items[0].metadata.name}').Trim()
@@ -137,7 +137,7 @@ if ($useK8s) {
     docker stop ingestion 2>$null | Out-Null
 }
 
-# ── Step 5: Publish Events During Outage ─────────────────────────────────────
+# --- Step 5: Publish Events During Outage ---
 Log-Step "5/6" "Publishing 5 events while Ingestion Service is DOWN..."
 
 for ($i = 1; $i -le 5; $i++) {
@@ -149,7 +149,7 @@ for ($i = 1; $i -le 5; $i++) {
 
 Log-Pass "5 events safely published into Kafka partition buffer while Ingestion was dead!"
 
-# ── Step 6: Self-Healing & Catch-Up Verification ─────────────────────────────
+# --- Step 6: Self-Healing & Catch-Up Verification ---
 Log-Step "6/6" "Waiting for Ingestion Service to recover and catch up..."
 
 if ($useK8s) {
@@ -176,7 +176,7 @@ while ($retries -gt 0) {
 
 $part2Count = Query-DBCount -eventType "downtime-buffer"
 
-# ── Final Metrics ────────────────────────────────────────────────────────────
+# --- Final Metrics ---
 Write-Host "`n============================================================" -ForegroundColor Yellow
 Write-Host "  DEMO METRICS & VERIFICATION SUMMARY                      " -ForegroundColor Yellow
 Write-Host "============================================================" -ForegroundColor Yellow

@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# SurgesEntry — OpenTelemetry distributed tracing & Jaeger validation
+# SurgesEntry — OpenTelemetry distributed tracing & Jaeger end-to-end verification
 $ErrorActionPreference = "Continue"
 $failed = 0
 
@@ -20,8 +20,8 @@ $pgDb = if ($env:POSTGRES_DB) { $env:POSTGRES_DB } else { "eventplatform" }
 function Step([string]$n, [string]$label) {
     Write-Host "`n--- [$n] $label ---" -ForegroundColor Cyan
 }
-function Pass([string]$msg) { Write-Host "  PASS  $msg" -ForegroundColor Green }
-function Fail([string]$msg) { $script:failed++; Write-Host "  FAIL  $msg" -ForegroundColor Red }
+function Pass([string]$msg) { Write-Host "  [PASS] $msg" -ForegroundColor Green }
+function Fail([string]$msg) { $script:failed++; Write-Host "  [FAIL] $msg" -ForegroundColor Red }
 
 # 1. Container health
 Step "1/5" "Verify container health"
@@ -54,8 +54,8 @@ try {
 
 # 3. Distributed Trace spanning all 3 microservices
 Step "3/5" "Verify multi-hop distributed trace in Jaeger"
-$traceFound = $false
 $sampledTraceId = ""
+$idempotencyKey = ""
 try {
     $traceResp = Invoke-RestMethod -Uri "http://localhost:16686/api/traces?service=notification-service&limit=5" -Method Get
     if ($traceResp.data.Count -gt 0) {
@@ -63,6 +63,14 @@ try {
         $sampledTraceId = $trace.traceID
         $spanOperations = $trace.spans | ForEach-Object { $_.operationName }
         $spanServices = $trace.processes.PSObject.Properties | ForEach-Object { $_.Value.serviceName } | Select-Object -Unique
+
+        foreach ($sp in $trace.spans) {
+            $tag = $sp.tags | Where-Object { $_.key -eq "event.idempotency_key" } | Select-Object -First 1
+            if ($tag -and $tag.value) {
+                $idempotencyKey = [string]$tag.value
+                break
+            }
+        }
 
         Pass "Found distributed trace ID: $sampledTraceId"
         Write-Host "    Spans recorded: $($trace.spans.Count)" -ForegroundColor Gray
@@ -72,7 +80,6 @@ try {
 
         if ($spanServices -contains "ingestion-service" -and $spanServices -contains "processing-service" -and $spanServices -contains "notification-service") {
             Pass "Trace traverses all 3 microservices (ingestion -> processing -> notification)"
-            $traceFound = $true
         } else {
             Fail "Trace does not span all 3 services. Present: $($spanServices -join ', ')"
         }
@@ -83,24 +90,26 @@ try {
     Fail "Failed to inspect Jaeger traces: $_"
 }
 
-# 4. PostgreSQL Trace ID persistence
-Step "4/5" "Verify trace_id persistence in PostgreSQL"
-if ($sampledTraceId) {
-    $pgResult = docker exec postgres psql -U $pgUser -d $pgDb -t -A -c "SELECT user_id, event_type, event_value, rolling_avg, is_anomaly FROM processed_events WHERE trace_id = '$sampledTraceId';" 2>$null
+# 4. PostgreSQL event correlation persistence
+Step "4/5" "Verify event correlation persistence in PostgreSQL"
+$lookupKey = if ($idempotencyKey) { $idempotencyKey } else { $sampledTraceId }
+if ($lookupKey) {
+    $safeKey = $lookupKey -replace "'", "''"
+    $pgResult = docker exec postgres psql -U $pgUser -d $pgDb -t -A -c "SELECT user_id, event_type, event_value, rolling_avg, is_anomaly FROM processed_events WHERE trace_id = '$safeKey';" 2>$null
     if ($pgResult) {
-        Pass "Database row found with trace_id $sampledTraceId"
+        Pass "Database row found for correlation key $lookupKey (Jaeger trace: $sampledTraceId)"
         Write-Host "    DB Record: $pgResult" -ForegroundColor Gray
     } else {
-        Fail "Trace ID $sampledTraceId not found in processed_events table"
+        Fail "Correlation key $lookupKey not found in processed_events table"
     }
 } else {
-    Fail "Skipping DB check due to missing sample trace ID"
+    Fail "Skipping DB check due to missing sample trace/correlation key"
 }
 
 # 5. Summary
 Write-Host "`n=== Tracing Verification Summary ===" -ForegroundColor Cyan
 if ($failed -eq 0) {
-    Write-Host "ALL CHECKS PASSED: OpenTelemetry distributed tracing and Jaeger integration fully verified!" -ForegroundColor Green
+    Write-Host "ALL CHECKS PASSED: OpenTelemetry distributed tracing and Jaeger integration verified." -ForegroundColor Green
     exit 0
 } else {
     Write-Host "$failed CHECK(S) FAILED." -ForegroundColor Red
