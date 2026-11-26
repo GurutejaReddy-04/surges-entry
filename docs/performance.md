@@ -4,27 +4,26 @@
 
 ---
 
-## 1. Performance Overview & Historical Baselines
+## 1. Performance Overview & Baselines
 
-SurgesEntry is engineered for low-latency streaming ingestion and real-time statistical inference.
+SurgesEntry is engineered for low-latency streaming ingestion and real-time statistical evaluation.
 
-```
-       Kafka Consumer ──► Ingestion (:8080) ──► gRPC (:50051) ──► Processing Service
-                                                                       │
-                      ┌────────────────────────────────────────────────┼───────────────────────┐
-                      ▼                                                ▼                       ▼
-            Atomic Redis Pipeline                              PostgreSQL Audit         Async Alert Queue
-           (LRANGE + LPUSH + LTRIM)                        (INSERT via pgxpool)       (Buffered Worker Pool)
-               [Single RTT: ~0.8ms]                            [Indexed: ~1.2ms]          [Non-blocking: ~0.1ms]
+```text
+Kafka Consumer --> Ingestion (:8080) --> gRPC (:50051) --> Processing Service
+                                                                  |
+                 +------------------------------------------------+--------------------+
+                 v                                                v                    v
+        Redis Hot State                                   PostgreSQL Audit     Async Alert Queue
+ (ComputeAverage -> DB -> CommitEvent)               (INSERT ON CONFLICT)    (Buffered Worker Pool)
 ```
 
 ### Baseline Performance Summary
 
 | Metric | Measured Baseline | Target SLA | System Impact |
 |---|---|---|---|
-| **Pipeline Throughput** | 100 – 250 events/sec | > 100 events/sec | Single consumer replica; scalable via Kafka partitions |
-| **End-to-End Latency (p50)** | **2.1 ms** | < 5.0 ms | Ingestion + gRPC + Redis pipelining + Postgres insert |
-| **End-to-End Latency (p95)** | **4.8 ms** | < 10.0 ms | Includes anomaly detection and alerting evaluation |
+| **Pipeline Throughput** | 100 - 250 events/sec | > 100 events/sec | Single consumer replica; scalable via Kafka partitions |
+| **End-to-End Latency (p50)** | **2.1 ms** | < 5.0 ms | Ingestion + gRPC + Redis + Postgres insert |
+| **End-to-End Latency (p95)** | **4.8 ms** | < 10.0 ms | Includes anomaly detection and alert evaluation |
 | **End-to-End Latency (p99)** | **8.2 ms** | < 15.0 ms | Tail latency under burst simulator load |
 | **Failover Recovery (MTTR)** | **< 6.0 seconds** | < 10.0 seconds | Consumer pod crash to stream resumption |
 | **Container Memory (RSS)** | **~18 MB RSS** | < 64 MB | Minimal Go runtime memory footprint |
@@ -33,71 +32,70 @@ SurgesEntry is engineered for low-latency streaming ingestion and real-time stat
 
 ---
 
-## 2. Atomic Single-Round-Trip Hot State (Redis)
+## 2. Two-Phase Sliding-Window Hot State (Redis)
 
-Calculating per-user rolling averages at scale requires low network overhead and strong concurrency isolation. SurgesEntry implements this in [`services/processing/hotstate.go`](../services/processing/hotstate.go) using Redis transaction pipelining (`MULTI/EXEC`).
+Calculating per-user rolling averages at scale requires low overhead, strict concurrency safety, and resistance to outlier self-pollution and dual-write desync. SurgesEntry implements this in [`services/processing/hotstate.go`](../services/processing/hotstate.go) and [`services/processing/server.go`](../services/processing/server.go).
 
-### 2.1 The Outlier Self-Pollution Problem
-If a naive implementation pushes the incoming value to the user's history list *before* calculating the average, a massive anomalous spike (e.g., 10× normal) pollutes its own baseline. This artificially elevates the rolling average, potentially masking subsequent anomalies.
+### 2.1 The Outlier Self-Pollution & Dual-Write Problems
+- **Self-pollution**: Pushing an incoming spike to the user's window before computing the baseline elevates the average and masks subsequent anomalies.
+- **Dual-write desync**: Writing to Redis before PostgreSQL persistence succeeds would corrupt the rolling window if PostgreSQL fails and Kafka redelivers the event.
 
-### 2.2 The Atomic Pipeline Solution
-SurgesEntry queues `LRANGE` **before** `LPUSH` within a single Redis atomic transaction:
+### 2.2 Per-User Serialized Two-Phase Pipeline
+`EventProcessor.ProcessEvent` acquires a striped per-user lock (`256` lock stripes hashed by `user_id`) and executes two separate Redis `TxPipeline` calls around the PostgreSQL write:
 
-```go
-pipe := s.client.TxPipeline()
-lrangeCmd := pipe.LRange(ctx, key, 0, int64(s.windowSize-1)) // 1. Read historical baseline
-pipe.LPush(ctx, key, value)                                   // 2. Append new event
-pipe.LTrim(ctx, key, 0, int64(s.windowSize-1))               // 3. Cap window to 10 items
-pipe.Expire(ctx, key, time.Hour)                             // 4. Reset TTL
-_, err := pipe.Exec(ctx)
-```
-
-**Benefits**:
-1. **Uncontaminated Baseline**: The statistical baseline is computed strictly over the pre-existing history prior to the new event arriving.
-2. **Single Network Round-Trip**: Combines 4 discrete commands into a single round-trip, reducing cache operation latency from ~3.2 ms to ~0.8 ms.
-3. **Atomic Multi-Replica Safety**: Redis single-threaded execution guarantees that concurrent replicas cannot interleave commands for the same user key.
+1. **Pre-DB Baseline Read (`ComputeAverage`)**:
+   ```go
+   pipe := s.client.TxPipeline()
+   lrangeCmd := pipe.LRange(ctx, key, 0, int64(winSize-1))
+   pipe.Expire(ctx, key, 3600*time.Second)
+   _, err := pipe.Exec(ctx)
+   ```
+2. **PostgreSQL Idempotent Insert**:
+   Persists the record with `ON CONFLICT (trace_id) ... DO NOTHING RETURNING id`.
+3. **Post-DB Window Commit (`CommitEvent`, only when `inserted == true`)**:
+   - **Normal events**: `LPUSH` -> `LTRIM 0 (winSize-1)` -> `EXPIRE 3600s` in a `TxPipeline`.
+   - **Anomalies**: Renews TTL only (`EXPIRE 3600s`) without appending the outlier to the window.
+   - **Duplicates (`inserted == false`)**: Skips Redis commit entirely.
 
 ---
 
 ## 3. Asynchronous Bounded Notification Dispatch
 
-When an anomaly is flagged, forwarding an alert to the Notification Service must not add latency or backpressure to the primary ingestion stream.
+When an anomaly is flagged for a newly inserted event, forwarding an alert to the Notification Service does not block the primary ingestion path.
 
 SurgesEntry uses an asynchronous bounded worker pool in [`services/processing/server.go`](../services/processing/server.go):
 
 ```go
 type EventProcessor struct {
-    alertQueue chan *eventpb.AlertRequest // Bounded buffer: 1000 items
+    alertQueue chan *alertTask // Bounded buffer: 1000 items
     // ...
 }
 ```
 
-* **Non-Blocking Enqueue**: Processing pushes alerts to `alertQueue` using a non-blocking `select`:
+* **Non-Blocking Enqueue**: Processing enqueues alerts via a non-blocking `select`:
   ```go
   select {
-  case p.alertQueue <- alert:
+  case s.alertQueue <- task:
   default:
-      p.logger.Warn("alert queue full; dropping alert to protect throughput")
+      s.logger.WarnContext(ctx, "alert queue full, dropping notification dispatch", ...)
   }
   ```
-* **Dedicated Worker Goroutines**: 2 worker goroutines drain `alertQueue` and issue gRPC `SendAlert` RPCs.
-* **Latency Isolation**: If the Notification Service slows down or restarts, primary event processing latency remains unaffected.
+* **Dedicated Worker Goroutines**: 4 worker goroutines drain `alertQueue` and issue `SendAlert` RPCs, with bounded queue draining on graceful shutdown (`Stop()`).
+* **Latency Isolation**: Slowdowns or restarts in Notification Service do not stall Kafka partition consumption.
 
 ---
 
-## 4. Distributed Tracing & Flame Graph Analysis
+## 4. Distributed Tracing & Span Structure
 
-Every ingested event is instrumented with OpenTelemetry and correlated across 5 distributed spans:
+Each ingested event generates a 5-span distributed trace across the three services:
 
-```
-[ingestion.consume_event] (Root: ~2.1ms)
-  └── [client: event.ProcessingService/ProcessEvent] (~1.9ms)
-        └── [server: event.ProcessingService/ProcessEvent] (~1.8ms)
-              ├── [redis.TxPipeline] (~0.8ms)
-              ├── [postgres.insert_event] (~1.2ms)
-              └── (async) [client: event.NotificationService/SendAlert] (~0.4ms)
-                    └── [server: event.NotificationService/SendAlert] (~0.2ms)
+```text
+[ingestion.consume_event] (Root span in Ingestion)
+  +-- [client: event.ProcessingService/ProcessEvent] (Ingestion gRPC client)
+        +-- [server: event.ProcessingService/ProcessEvent] (Processing gRPC server)
+              +-- (async) [client: event.NotificationService/SendAlert] (Processing gRPC client, anomalies only)
+                    +-- [server: event.NotificationService/SendAlert] (Notification gRPC server)
 ```
 
-* **Context Propagation**: W3C `traceparent` metadata is automatically injected and extracted via `otelgrpc.NewClientHandler()` and `otelgrpc.NewServerHandler()`.
-* **Trace Storage**: Every database audit row in PostgreSQL records the hex-encoded 32-character `trace_id`, enabling instant lookup in Jaeger for any flagged audit event.
+* **Context Propagation**: W3C `traceparent` metadata is injected and extracted via `otelgrpc.NewClientHandler()` and `otelgrpc.NewServerHandler()`.
+* **Correlation Key**: The root `ingestion.consume_event` span records `event.idempotency_key` matching the deterministic `trace_id` column stored in PostgreSQL `processed_events`, enabling exact correlation between Jaeger traces and audit rows without breaking replay deduplication.

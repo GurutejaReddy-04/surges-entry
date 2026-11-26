@@ -10,7 +10,7 @@
 ```mermaid
 flowchart TD
     subgraph TrafficGeneration ["Traffic Generation"]
-        SIM["Event Simulator<br/>(Normal: N(100, 20), ~5% Outliers)"]
+        SIM["Event Simulator<br/>(Normal: mean=100, stddev=20, ~5% Outliers)"]
     end
 
     subgraph BrokerTier ["Event Broker Tier"]
@@ -24,8 +24,8 @@ flowchart TD
     end
 
     subgraph StateTier ["Storage & Caching Tier"]
-        REDIS[("Redis 7 (Hot State)<br/>• Atomic TxPipeline (MULTI/EXEC)<br/>• Pre-write LRANGE -> LPUSH -> LTRIM<br/>• 1-Hour Rolling TTL")]
-        POSTGRES[("PostgreSQL 16 (Audit Store)<br/>• Table: processed_events<br/>• Indexed by trace_id & user_id")]
+        REDIS[("Redis 7 (Hot State)<br/>• Two-Phase TxPipeline (MULTI/EXEC)<br/>• Pre-DB Read -> Post-DB Commit<br/>• 1-Hour Rolling TTL")]
+        POSTGRES[("PostgreSQL 16 (Audit Store)<br/>• Table: processed_events<br/>• Unique Index on trace_id")]
     end
 
     subgraph TelemetryTier ["Observability Tier"]
@@ -36,8 +36,8 @@ flowchart TD
     SIM -->|"Keyed Message Produce"| KAFKA
     KAFKA -->|"Sequential Partition Stream"| ING
     ING -->|"gRPC: ProcessEvent<br/>W3C traceparent"| PROC
-    PROC -->|"Atomic TxPipeline (single RTT)"| REDIS
-    PROC -->|"Audit Insert with Retry"| POSTGRES
+    PROC -->|"Pre-DB Read + Post-DB Commit"| REDIS
+    PROC -->|"Idempotent Audit Insert"| POSTGRES
     PROC -->|"Async Bounded Dispatch"| NOTIF
 
     %% Telemetry
@@ -61,18 +61,18 @@ flowchart TD
 ### 2.2 Processing Service (`services/processing/`)
 * **Role**: Computes sliding rolling-window statistics, detects statistical anomalies, and logs audit events.
 * **Key Design Decisions**:
-  * **Decoupled Pre-Write Window Read**: Uses Redis `TxPipeline` to issue `LRANGE` before `LPUSH`, computing baseline statistics strictly from historical events so incoming spikes do not contaminate their own detection baseline.
+  * **Two-Phase Hot-State Window & Per-User Locking**: Uses striped per-user locks (`256` stripes) around a decoupled read-before-write flow: `ComputeAverage` reads the historical window (`LRANGE` + `EXPIRE`) before database persistence, and `CommitEvent` appends normal events (`LPUSH` + `LTRIM` + `EXPIRE`) only after a new database row is inserted, preventing both self-pollution and dual-write desync on replay.
   * **Two-Tier Anomaly Engine**:
-    * **Tier 1 (Dynamic)**: Evaluates `value > 1.5 × rolling_avg`.
-    * **Tier 2 (Static Fallback)**: If Redis is unavailable or on cold-start (empty window), falls back to `value > 1000.0`.
-  * **PostgreSQL Audit Store**: Persists records with computed rolling averages, anomaly flags, and 32-hex `trace_id`.
-  * **Decoupled Alert Dispatch**: Routes anomaly alerts through a bounded in-memory worker queue (buffer size 1000, 2 concurrent workers) so slow notification RPCs never block the core processing path.
+    * **Tier 1 (Dynamic)**: Evaluates `value > 1.5 * rolling_avg` when `rolling_avg > 0`.
+    * **Tier 2 (Static Fallback)**: If Redis is unavailable, on cold-start (empty window), or when `rolling_avg <= 0`, falls back to `value > 1000.0`.
+  * **PostgreSQL Audit Store**: Persists idempotent records (`ON CONFLICT (trace_id) DO NOTHING`) with computed rolling averages, anomaly flags, event timestamps, and deterministic `trace_id`.
+  * **Decoupled Alert Dispatch**: Routes anomaly alerts through a bounded in-memory worker queue (buffer size 1000, 4 concurrent workers) so slow notification RPCs never block the core processing path.
 
 ### 2.3 Notification Service (`services/notification/`)
 * **Role**: Receives anomaly alerts over gRPC and emits structured JSON alert logs.
 * **Key Design Decisions**:
-  * Emits standardized structured log records with `trace_id`, `user_id`, `value`, `rolling_avg`, and `timestamp`.
-  * Fully instrumented with `otelgrpc.NewServerHandler()`, completing the 5-span distributed trace.
+  * Emits structured `ANOMALY_ALERT` JSON log records with `alert`, `alert_type`, `user_id`, `event_type`, `value`, `trace_id`, `otel_trace_id` (when present), and `timestamp`.
+  * Instrumented with `otelgrpc.NewServerHandler()`, completing the 5-span distributed trace.
 
 ---
 
@@ -141,7 +141,7 @@ SurgesEntry provides an **at-least-once delivery contract for valid messages**, 
 | Failure Scenario | Mitigation Strategy | Observed / Architectural Result |
 | :--- | :--- | :--- |
 | **Ingestion Pod Crash** | Kafka retains partition high-water mark; Kubernetes restarts pod | Pod resumes consumption from last committed offset under at-least-once semantics. |
-| **Downstream Outage (Postgres / Processing)** | Ingestion halts partition consumption without marking offset | Offsets remain intact; stream pauses safely until downstream self-heals. |
+| **Downstream Outage (Postgres / Processing)** | Ingestion halts partition claim without marking offset and backs off exponentially before rejoin | Offsets remain intact; stream retries safely until downstream self-heals. |
 | **Redis Cache Outage** | Isolated error boundary in Processing; falls back to Tier-2 static threshold | Processing continues seamlessly; audit logs preserved; zero pipeline interruption. |
 | **Notification RPC Lag** | Asynchronous bounded worker channel (`alertQueue`, buffer 1000) | Core event processing latency is completely isolated from alert delivery delays. |
 | **Poison Pill / Malformed JSON** | Parser validates schemas; poison pill logs diagnostic reason and drops cleanly | Message discarded (`return nil`) to prevent infinite partition consumer stalls. |
@@ -152,7 +152,7 @@ SurgesEntry provides an **at-least-once delivery contract for valid messages**, 
 
 ## 5. Distributed Tracing Flow
 
-Each event generates a unified 5-span flame graph linked by W3C `traceparent` metadata:
+Each event generates a unified 5-span distributed trace linked by W3C `traceparent` metadata:
 1. `ingestion.consume_event` (Ingestion internal span)
 2. `client: event.ProcessingService/ProcessEvent` (Ingestion gRPC client)
 3. `server: event.ProcessingService/ProcessEvent` (Processing gRPC server)

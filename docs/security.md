@@ -6,45 +6,51 @@
 
 ## 1. Secrets Architecture & Decoupling
 
-SurgesEntry enforces strict separation between application code, public manifests, and operational secrets.
+SurgesEntry enforces strict separation between source code, deployment templates, and runtime credentials.
 
-```
+```text
        Developer / CI                     Production Kubernetes
-             │                                      │
-    ┌────────┴────────┐                    ┌────────┴────────┐
-    ▼                 ▼                    ▼                 ▼
+             |                                      |
+    +--------+--------+                    +--------+--------+
+    v                 v                    v                 v
 .env.example    secret.example.yaml   HashiCorp Vault   AWS Secrets Manager
- (Template)        (Template)               │                 │
-    │                 │                     └────────┬────────┘
-    ▼                 ▼                              ▼
-  .env          k8s/secret.yaml         External Secrets Operator (ESO)
-(Git-Ignored)    (Git-Ignored)                       │
-                                                     ▼
-                                        Ephemeral Kubernetes Secret
+ (Template)        (Template)              |                 |
+    |                 |                    +--------+--------+
+    v                 v                             v
+  .env          k8s/secret.yaml        External Secrets Operator (ESO)
+(Git-Ignored)    (Git-Ignored)                      |
+                                                    v
+                                       Ephemeral Kubernetes Secret
 ```
 
 ### 1.1 Local Development Isolation
 1. **Templates Only in Source Control**:
-   - `.env.example`: Provides a self-documenting template for local Docker Compose variables.
-   - `k8s/secret.example.yaml`: Provides placeholder definitions for Kubernetes deployments.
+   - `.env.example`: Self-documenting template for local Docker Compose variables.
+   - `k8s/secret.example.yaml`: Placeholder definitions for `POSTGRES_DSN` and `INTERNAL_AUTH_TOKEN`.
 2. **Ignored Operational Secrets**:
-   - `.gitignore` explicitly excludes `.env`, `.env.*`, and `k8s/secret.yaml`.
+   - `.gitignore` excludes `.env`, `.env.*`, and `k8s/secret.yaml`.
 3. **Fail-Closed Configuration**:
-   - `docker-compose.yml` uses strict variable validation (`${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}`). If `.env` is omitted, Compose halts immediately rather than launching unauthenticated or default-password services.
-   - Microservices validate database connection configuration on startup and exit immediately if required credentials are not supplied.
+   - `docker-compose.yml` requires `POSTGRES_USER` and `POSTGRES_PASSWORD` via Compose variable checks (`:?`).
+   - Processing Service exits immediately on startup if `POSTGRES_DSN` is unset.
 
-### 1.2 Continuous Integration (CI) Ephemeral Test Credentials
-Integration tests executed in GitHub Actions run against disposable ephemeral service containers (Kafka KRaft, Redis 7, PostgreSQL 16). The CI workflow configuration (`.github/workflows/ci.yml`) provisions an isolated, throwaway runner password (`POSTGRES_PASSWORD: eventplatform_ci_password`) scoped strictly to the short-lived runner virtual machine. No active production, staging, or developer workstation credentials are committed to version control.
+### 1.2 Inter-Service gRPC Authentication
+Both `ProcessingService` and `NotificationService` enforce shared-token validation via gRPC unary server interceptors when `INTERNAL_AUTH_TOKEN` is configured:
+- Outgoing gRPC clients (`Ingestion` -> `Processing`, `Processing` -> `Notification`) attach `x-surges-internal-token` metadata.
+- Server interceptors validate the token using constant-time comparison (`crypto/subtle.ConstantTimeCompare`), returning `codes.Unauthenticated` or `codes.PermissionDenied` on mismatch while exempting `/grpc.health.v1.Health/` probes.
+- Panic recovery unary interceptors catch handler panics and return `codes.Internal` without crashing the gRPC server.
+
+### 1.3 Continuous Integration (CI) Ephemeral Test Credentials
+Integration tests in GitHub Actions (`.github/workflows/ci.yml`) run against ephemeral Docker containers using disposable runner-scoped credentials (`eventplatform_ci_password`).
 
 ---
 
 ## 2. Container Sandboxing & Least Privilege
 
-All microservice containers (`ingestion`, `processing`, `notification`) follow defense-in-depth container security practices:
+All microservice containers (`ingestion`, `processing`, `notification`) follow defense-in-depth practices:
 
 ### 2.1 Multi-Stage Minimal Images
-* Built with `CGO_ENABLED=0` producing statically linked Go binaries.
-* Executed on minimal Alpine 3.20 base images with an image footprint under 40 MB.
+* Built with `golang:1.23-alpine` and `CGO_ENABLED=0` to produce statically linked binaries.
+* Runtime images run on minimal `alpine:3.20` with an image footprint under 40 MB.
 
 ### 2.2 Pod Security Context (Kubernetes)
 Configured across all deployment manifests:
@@ -63,34 +69,15 @@ containers:
         drop:
           - ALL
 ```
-* **Non-Root Execution**: Runs as dedicated `appuser` (UID/GID 10001), preventing privilege escalation to host root.
-* **Read-Only Root Filesystem**: The container filesystem is immutable. Temporary write scratchpads are restricted to an explicitly mounted in-memory `/tmp` volume.
-* **Linux Capabilities Dropped**: All Linux capabilities (`CAP_SYS_ADMIN`, `CAP_NET_RAW`, etc.) are dropped.
+* **Non-Root Execution**: Runs as dedicated `appuser` (UID/GID 10001).
+* **Read-Only Root Filesystem**: Immutable root filesystem with `/tmp` backed by an `emptyDir` volume.
+* **Linux Capabilities Dropped**: All Linux capabilities dropped (`drop: [ALL]`).
 
 ---
 
-## 3. Credential Baseline & Repository Hygiene
+## 3. Enterprise Production Recommendations
 
-### 3.1 Zero-Secret Policy
-SurgesEntry enforces a strict zero-committed-credentials policy across its repository:
-* No operational secrets, API tokens, or database passwords are committed to source control.
-* Manifests and configuration files use example templates (`k8s/secret.example.yaml`, `.env.example`) containing placeholder strings only.
-
-### 3.2 Secret Prevention & Enforcement
-* `.gitignore` explicitly blocks `.env`, `.env.*`, and `k8s/secret.yaml`.
-* Pre-commit and CI validation checks ensure secret templates are not accidentally replaced with operational credentials during development.
-* All service configuration defaults to empty credentials, failing fast on startup if mandatory connection parameters are omitted.
-
----
-
-## 4. Enterprise Production Secrets Management
-
-In production cloud environments, static Kubernetes Secret files should not be used. The recommended reference architecture incorporates:
-
-1. **External Secrets Operator (ESO)**:
-   - Microservices declare an `ExternalSecret` custom resource.
-   - The ESO controller polls AWS Secrets Manager, HashiCorp Vault, or Azure Key Vault and synchronizes secrets into ephemeral in-memory Kubernetes `Secret` objects.
-2. **Cloud IAM Database Authentication**:
-   - For PostgreSQL (AWS Aurora / GCP Cloud SQL), replace password authentication entirely with short-lived (15-minute) IAM authentication tokens generated by the AWS/GCP SDK.
-3. **Mutual TLS (mTLS)**:
-   - Inter-service gRPC communication is encrypted in transit using SPIFFE/SPIRE certificates or an Istio/Linkerd service mesh sidecar proxy.
+In production cloud environments:
+1. **External Secrets Operator (ESO)**: Sync secrets dynamically from AWS Secrets Manager, HashiCorp Vault, or Azure Key Vault instead of static Secret manifests.
+2. **Managed IAM Database Auth**: Replace static PostgreSQL passwords with short-lived IAM authentication tokens where supported.
+3. **Mutual TLS (mTLS)**: Terminate and rotate inter-service mTLS certificates using a service mesh (Istio/Linkerd) or SPIFFE/SPIRE.

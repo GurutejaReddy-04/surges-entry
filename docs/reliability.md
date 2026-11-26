@@ -6,94 +6,78 @@
 
 ## 1. The Core Reliability Contract
 
-The SurgesEntry platform provides an **at-least-once processing contract for structurally and semantically valid events**, coupled with a **deliberate discard policy (drop-and-log) for malformed or invalid events**.
+The SurgesEntry platform provides an **at-least-once delivery contract with idempotent audit persistence** for valid events, paired with a **drop-and-log policy for malformed or semantically invalid payloads**.
 
-```
+```text
                            Incoming Kafka Message
-                                     │
-                        ┌────────────┴────────────┐
-                        ▼                         ▼
+                                     |
+                        +------------+------------+
+                        v                         v
                Structurally Valid?        Malformed JSON?
-                        │                         │
-                       YES                        NO ──► Drop & Log Warning
-                        │                                (Preserves Partition Liveness)
-                        ▼
+                        |                         |
+                       YES                        NO --> Drop & Log Warning
+                        |                                (Preserves Partition Liveness)
+                        v
                gRPC ProcessEvent()
-                        │
-         ┌──────────────┼──────────────┐
-         ▼              ▼              ▼
+                        |
+         +--------------+--------------+
+         v              v              v
      Success     codes.InvalidArgument  codes.Unavailable
-         │              │              │
-         ▼              ▼              ▼
+         |              |              |
+         v              v              v
    Mark Offset   Poison Pill Drop     Halt Partition Claim
   (session.Mark) (Preserves Liveness) (Do NOT Mark Offset;
-                                       Retry on Restart)
+                                       Exponential Backoff Rejoin)
 ```
 
 ### The Poison-Pill & Malformed Payload Boundary
-The ingestion service drops invalid messages rather than retrying them indefinitely, which would block the queue (see [`services/ingestion/handler.go`](../services/ingestion/handler.go)):
+The ingestion service drops invalid messages rather than retrying them indefinitely, which would stall the partition (see [`services/ingestion/handler.go`](../services/ingestion/handler.go)):
 
-1. **Malformed JSON Payloads**: If a message cannot be parsed or validated against the protobuf schema (`ParseAndValidateEvent`), the consumer logs a structured warning and returns `nil`. This deliberately discards the malformed payload rather than stalling the partition consumer loop indefinitely.
-2. **Downstream Validation Rejections (`codes.InvalidArgument`)**: If downstream processing rejects an event as semantically unprocessable, retrying will never succeed. The handler treats this as a poison pill, logs an alert, and returns `nil` (`// Drop and continue`).
-
-**Design Rationale**: A single unparseable message must never cause head-of-line blocking for thousands of valid user events queued on the same partition. SurgesEntry intentionally prioritizes partition throughput and system availability over retaining garbage bytes.
+1. **Malformed JSON / Schema Failures**: If a message fails `ParseAndValidateEventWithFallback`, the consumer logs a structured warning and returns `nil` so the consumer advances past the corrupted payload.
+2. **Downstream Validation Rejections (`codes.InvalidArgument`)**: If Processing rejects an event as invalid (e.g., empty `user_id`, empty `event_type`, `NaN`/`Inf`, or value outside `[-99999999.99, 99999999.99]`), retrying will never succeed. The handler logs a warning and returns `nil`.
 
 ---
 
 ## 2. Defensive Consumer Offset Management
 
-Kafka consumer group offsets monotonically advance if not managed defensively. Default auto-commit implementations can mark failed offsets as consumed, causing silent data loss.
-
-SurgesEntry eliminates this failure mode through explicit, transactional offset mechanics:
-
-1. **Manual Marking Only (`session.MarkMessage`)**: Offsets are committed only after the downstream gRPC RPC succeeds and the event is durably persisted to PostgreSQL.
-2. **In-Place Exponential Backoff**: When encountering transient gRPC errors, the consumer executes up to 3 retries in-place (50ms, 100ms, 200ms backoff).
-3. **Partition Claim Halting on Hard Failures**: If downstream services return `codes.Unavailable` (e.g., PostgreSQL or Processing is unreachable after all retries), `ProcessSingleMessage` returns an error, halting the `ConsumeClaim()` loop immediately **without calling `session.MarkMessage()`**.
-4. **Resumption from Last Committed Offset**: When the pod restarts or Kafka rebalances, consumption resumes precisely from the uncommitted failed offset, guaranteeing at-least-once delivery.
+1. **Manual Marking Only (`session.MarkMessage`)**: Offsets are marked only after `ProcessEvent` returns `success = true` (after durable PostgreSQL persistence).
+2. **In-Place Exponential Backoff**: Transient gRPC errors trigger up to 3 in-place attempts (50ms, 100ms backoff between attempts) before failing the message.
+3. **Partition Claim Halting on Hard Failures**: On persistent downstream failure (`codes.Unavailable`), `ProcessSingleMessage` returns an error, halting `ConsumeClaim()` **without calling `session.MarkMessage()`**.
+4. **Consumer Loop Backoff**: `runConsumerLoops` applies bounded exponential backoff (250ms up to 10s) before rejoining the consumer group, flipping `/healthz` to HTTP `503` after 3 consecutive consume errors.
 
 ---
 
-## 3. Empirical Verification: Consumer Outage Experiment
-
-Rather than asserting unverified universal guarantees, SurgesEntry documents the precise experimental protocol used to verify crash recovery.
-
-### Experiment Summary
+## 3. Consumer Outage Experiment
 
 | Parameter | Specification |
 |---|---|
-| **Hypothesis** | Kafka durable partition buffer retains in-flight published events during abrupt consumer termination; pod self-healing recovers 100% of buffered events without loss. |
-| **Test Environment** | Local single-node Kafka KRaft (6 partitions), PostgreSQL 16 store, Ingestion & Processing microservices. |
-| **Failure Point** | Abrupt SIGKILL / pod deletion (`kubectl delete pod --now` or `docker stop`) of `surges-entry-ingestion`. |
-| **Workload** | 10 baseline events published -> Ingestion killed mid-stream -> 5 events published during outage -> Ingestion restarted -> DB records audited. |
-| **Observed Result** | **15/15 events verified in PostgreSQL** (10 baseline + 5 recovered from outage buffer). MTTR < 6 seconds. |
+| **Hypothesis** | Kafka durable partition log retains published events while Ingestion is down; restarted consumer resumes from uncommitted offset with zero loss. |
+| **Test Environment** | Single-node Kafka KRaft (6 partitions), Redis 7, PostgreSQL 16, Ingestion, Processing, Notification. |
+| **Failure Point** | Abrupt container/pod termination (`kubectl delete pod --now` or `docker stop`) of `surges-entry-ingestion`. |
+| **Workload** | 10 baseline events -> Ingestion stopped -> 5 outage events -> Ingestion restarted -> PostgreSQL audited. |
+| **Observed Result** | **15/15 events verified in PostgreSQL** (10 baseline + 5 outage buffered). MTTR < 6 seconds. |
 | **Reproduction Script** | [`scripts/kill-replay-demo.ps1`](../scripts/kill-replay-demo.ps1) / [`scripts/kill-replay-demo.sh`](../scripts/kill-replay-demo.sh) |
 
-### Explicit Assumptions
-This experimental verification holds under the following conditions:
-* The Kafka broker remains operational and retains topic durability (filesystem fsync).
-* The PostgreSQL audit database remains accessible upon consumer recovery.
-* Consumer group offset coordination topics (`__consumer_offsets`) remain healthy.
-
-### Known Limitations & Scope
-* **Single Broker Topology**: The local experiment does not simulate broker split-brain, multi-broker KRaft quorum failure, or broker disk destruction without active replication (`min.insync.replicas > 1`).
-* **At-Least-Once Duplication**: If a consumer process is terminated in the narrow window between writing to PostgreSQL and committing the Kafka offset, the event may be reprocessed upon restart.
+### Scope & Assumptions
+* Kafka broker and PostgreSQL remain healthy and retain committed state on disk.
+* Single-broker local setup does not simulate multi-broker KRaft quorum loss or un-replicated disk failure (`RF=1`, `min.insync.replicas=1`).
 
 ---
 
-## 4. Deterministic Stream Replayability
+## 4. Idempotency & Deterministic Stream Replay
 
-SurgesEntry supports deterministic stream reprocessing on demand via Kafka offset rewinds:
+SurgesEntry protects against duplicate side effects during crash redelivery and manual offset rewinds:
 
-1. **Partition Key Affinity**: Kafka hashes message keys by `user_id`. All events for a specific user land on the same partition in strict FIFO sequence.
-2. **Count-Based vs. Time-Based Windows**: Time-based tumbling/sliding windows suffer from clock drift, network delays, and watermark skew during batch replay. SurgesEntry uses count-based sliding windows (last 10 events per user).
-3. **Replay Determinism**: Because user events are strictly ordered and window evaluation is count-based, rewinding the consumer group offset (`--to-earliest`) produces the exact same statistical moving averages as real-time processing.
-4. **Verification Script**: [`scripts/offset-replay-demo.ps1`](../scripts/offset-replay-demo.ps1) / [`scripts/offset-replay-demo.sh`](../scripts/offset-replay-demo.sh).
+1. **Partition Key Affinity**: Producers key messages by `user_id` (`HashPartitioner`), keeping each user's events on a single partition in strict FIFO order.
+2. **Deterministic Idempotency Key**: When an event omits `trace_id`, Ingestion derives a stable 32-hex key from `SHA-256(topic:partition:offset)[:16]`.
+3. **PostgreSQL Deduplication**: `SaveProcessedEvent` uses `INSERT ... ON CONFLICT (trace_id) WHERE trace_id IS NOT NULL AND trace_id <> '' DO NOTHING RETURNING id`. Replayed events return `inserted = false`, skipping both Redis `CommitEvent` and duplicate alert dispatch.
+4. **Clean Replay Verification**: When replaying from `--to-earliest` against a flushed Redis + truncated DB state, count-based sliding windows (`10` items) yield deterministic rolling averages independent of wall-clock drift. See [`scripts/offset-replay-demo.ps1`](../scripts/offset-replay-demo.ps1) / [`scripts/offset-replay-demo.sh`](../scripts/offset-replay-demo.sh).
 
 ---
 
 ## 5. Graceful Degradation (Two-Tier Anomaly Engine)
 
-To isolate cache infrastructure failures from the ingestion stream, the Processing Service implements a two-tier anomaly detection hierarchy:
+To isolate Redis outages from event ingestion:
 
-* **Tier 1 (Dynamic Rolling Window)**: When Redis is reachable, evaluates event value against `1.5 × rolling_avg` using atomic `rdb.TxPipeline()` pre-write evaluation.
-* **Tier 2 (Static Fallback Heuristic)**: If Redis connection times out or fails, the call is caught within an isolated error boundary. Processing logs a warning, sets `rolling_avg = NULL`, and evaluates against a static threshold (`value > 1000.0`). The event is persisted to PostgreSQL and the gRPC call returns success. Cache failure never halts stream ingestion.
+* **Tier 1 (Dynamic Rolling Window)**: When Redis responds with a positive `rolling_avg`, Processing evaluates `value > 1.5 * rolling_avg` (configurable via `DEVIATION_MULTIPLIER`).
+* **Tier 2 (Static Fallback Threshold)**: If Redis is unreachable, the window is empty, or `rolling_avg <= 0`, Processing logs a warning, persists `rolling_avg = NULL`, and evaluates `value > 1000.0` (configurable via `FALLBACK_THRESHOLD`).

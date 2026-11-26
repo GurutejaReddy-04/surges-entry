@@ -3,12 +3,12 @@
 
 [![CI](https://github.com/GurutejaReddy-04/surges-entry/actions/workflows/ci.yml/badge.svg)](https://github.com/GurutejaReddy-04/surges-entry/actions/workflows/ci.yml)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-surges--entry-blue?style=flat&logo=github)](https://github.com/GurutejaReddy-04/surges-entry)
-[![Go Version](https://img.shields.io/badge/Go-1.22%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Kafka](https://img.shields.io/badge/Kafka-KRaft%207.7-231F20?style=flat&logo=apachekafka)](https://kafka.apache.org/)
 [![gRPC](https://img.shields.io/badge/gRPC-Protobuf-244c5a?style=flat&logo=grpc)](https://grpc.io/)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-v1.28-425CC7?style=flat&logo=opentelemetry)](https://opentelemetry.io/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28%2B-326CE5?style=flat&logo=kubernetes)](https://kubernetes.io/)
-[![Docker](https://img.shields.io/badge/Docker-Images%20%3C41MB-2496ED?style=flat&logo=docker)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/Docker-Images%20%3C40MB-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 
 **SurgesEntry** is an event processing service written in Go. It reads events from Kafka, calculates rolling averages using Redis, flags anomalies, saves records to PostgreSQL, and uses OpenTelemetry for tracing.
 
@@ -19,7 +19,7 @@
 ```mermaid
 flowchart TD
     subgraph Host ["Traffic Generation"]
-        SIM["Event Simulator<br/>(Synthetic stream: N(100, 20), ~5% Outliers)"]
+        SIM["Event Simulator<br/>(Synthetic stream: mean=100, stddev=20, ~5% Outliers)"]
     end
 
     subgraph KafkaCluster ["Message Broker Tier"]
@@ -33,7 +33,7 @@ flowchart TD
     end
 
     subgraph StateTier ["Stateful Storage & Caching"]
-        REDIS[("Redis 7 (Hot State)<br/>Atomic TxPipeline (MULTI/EXEC)<br/>Count-based Window (10 items)")]
+        REDIS[("Redis 7 (Hot State)<br/>Two-Phase TxPipeline (MULTI/EXEC)<br/>Count-based Window (10 items)")]
         POSTGRES[("PostgreSQL 16 (Audit Store)<br/>Table: processed_events<br/>Indexed by trace_id & user_id")]
     end
 
@@ -44,7 +44,7 @@ flowchart TD
     SIM -->|"Keyed Produce"| KAFKA
     KAFKA -->|"Partition Stream"| ING
     ING -->|"gRPC: ProcessEvent (traceparent)"| PROC
-    PROC -->|"Atomic TxPipeline (single RTT)"| REDIS
+    PROC -->|"Pre-DB Read + Post-DB Commit (TxPipeline)"| REDIS
     PROC -->|"Insert Audit Record"| POSTGRES
     PROC -->|"Async Bounded Dispatch"| NOTIF
 
@@ -61,7 +61,7 @@ flowchart TD
 * **Redis Transactions**: Uses Redis `TxPipeline` to avoid race conditions.
 * **Fallback Thresholds**: Uses a static threshold if Redis is down.
 * **At-Least-Once Delivery & Poison Pill Discard**: Offsets are committed only after successful PostgreSQL persistence. Downstream outages halt the partition claim without monotonic advancement. Unparseable JSON and semantic invalid arguments (`codes.InvalidArgument`) are deliberately dropped and logged (`return nil`) to preserve partition liveness.
-* **Distributed Observability**: Instrumented with OpenTelemetry Go SDK and `otelgrpc`, generating 5-span flame graphs in Jaeger correlated by W3C `traceparent` headers and stored in PostgreSQL.
+* **Distributed Observability**: Instrumented with the OpenTelemetry Go SDK and `otelgrpc`, generating 5-span distributed traces in Jaeger correlated via W3C `traceparent` headers while persisting deterministic `trace_id` idempotency keys in PostgreSQL.
 
 ---
 
@@ -86,7 +86,7 @@ flowchart TD
 
 ### Prerequisites
 * **Docker** & **Docker Compose**
-* **Go 1.22+**
+* **Go 1.23+**
 * **PowerShell 7+** (Windows) or **Bash** (Linux/macOS)
 
 ### 1. Initialize Environment & Start Stack
@@ -151,7 +151,7 @@ Deep-dive documentation is modularized in the [`docs/`](docs/) directory:
 | **[docs/architecture.md](docs/architecture.md)** | Full system data flow, local hybrid vs. reference cloud production topology, and architectural trade-offs. |
 | **[docs/reliability.md](docs/reliability.md)** | At-least-once delivery contract, poison pill drop-and-log boundary, crash-recovery experiment, and offset replay. |
 | **[docs/performance.md](docs/performance.md)** | Redis `TxPipeline` atomicity, outlier self-pollution defense, async alerting, and trace latency breakdown. |
-| **[BENCHMARKS.md](BENCHMARKS.md)** | Benchmark provenance, workload overrides (`EVENT_RATE=200`), hardware specs, and reproduction protocol. |
+| **[BENCHMARKS.md](BENCHMARKS.md)** | Benchmark methodology, workload overrides (`EVENT_RATE=200`), hardware specs, and reproduction steps. |
 | **[docs/security.md](docs/security.md)** | Secret isolation (`.env.example`, `secret.example.yaml`), non-root container sandboxing, and historical credential audit. |
 | **[k8s/README.md](k8s/README.md)** | Kubernetes manifests, security contexts, probes, manual scaling, and secret setup. |
 | **[docs/demo/RECORDING_GUIDE.md](docs/demo/RECORDING_GUIDE.md)** | Terminal recording walkthrough for chaos failover and historical stream replay. |
